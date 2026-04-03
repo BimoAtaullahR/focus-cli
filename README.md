@@ -1,6 +1,6 @@
 # focus-cli
 
-Pomodoro app berbasis terminal Linux, ditulis dengan Go (hasil dari vibe coding dalam waktu semalam, showings its potential for personal projects).
+Pomodoro app berbasis terminal Linux, ditulis dengan Go (hasil dari vibe coding dalam waktu semalam, shows its potential for personal projects).
 
 ![alt text](image.png)
 ![alt text](image-1.png)
