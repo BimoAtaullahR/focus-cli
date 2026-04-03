@@ -2,6 +2,9 @@
 
 Pomodoro app berbasis terminal Linux, ditulis dengan Go (hasil dari vibe coding dalam waktu semalam, showings its potential for personal projects).
 
+![alt text](image.png)
+![alt text](image-1.png)
+
 ## Fitur MVP
 
 - Timer fokus dan break (short/long)
