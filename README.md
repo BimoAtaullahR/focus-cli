@@ -75,7 +75,7 @@ Saat sesi berjalan:
 ```bash
 focus task add "Belajar Go" --target 4 --desc "module concurrency"
 focus task list
-focus task edit 1 --title "Belajar Go Lanjut" --target 6
+focus task edit 1 --title "Belajar Go Lanjut" --target 6 --completed 2
 focus task done 1 true
 focus task delete 1
 ```

@@ -151,6 +151,29 @@ func TestStartCycleBlockedForDoneTask(t *testing.T) {
 	}
 }
 
+func TestEditTaskUpdatesCompletedAndDone(t *testing.T) {
+	m := newTestModel(t)
+	err := m.editTask(1, "Task A Updated", "desc", 3, 3)
+	if err != nil {
+		t.Fatalf("editTask() error = %v", err)
+	}
+
+	if got, want := m.tasks.Tasks[0].CompletedPomodoros, 3; got != want {
+		t.Fatalf("completed = %d, want %d", got, want)
+	}
+	if got, want := m.tasks.Tasks[0].Done, true; got != want {
+		t.Fatalf("done = %v, want %v", got, want)
+	}
+
+	err = m.editTask(1, "Task A Updated", "desc", 5, 2)
+	if err != nil {
+		t.Fatalf("editTask() error = %v", err)
+	}
+	if got, want := m.tasks.Tasks[0].Done, false; got != want {
+		t.Fatalf("done after lowering completed = %v, want %v", got, want)
+	}
+}
+
 func TestNormalizeKeySpace(t *testing.T) {
 	if got, want := normalizeKey(" "), "space"; got != want {
 		t.Fatalf("normalizeKey(space) = %q, want %q", got, want)

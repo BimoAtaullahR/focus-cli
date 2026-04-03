@@ -692,6 +692,7 @@ func (m *Model) openForm(kind formKind, task *model.Task) {
 		fields = []formField{
 			newTextField("Title", task.Title, true),
 			newTextField("Target sessions", strconv.Itoa(task.TargetSessions), false),
+			newTextField("Completed sessions", strconv.Itoa(task.CompletedPomodoros), false),
 			newTextField("Description", task.Description, false),
 		}
 	case formConfig:
@@ -753,8 +754,13 @@ func (m *Model) submitForm() (tea.Model, tea.Cmd) {
 			m.status = "target harus angka >= 1"
 			return m, nil
 		}
-		desc := strings.TrimSpace(m.form.fields[2].input.Value())
-		if err := m.editTask(task.ID, title, desc, target); err != nil {
+		completed, err := strconv.Atoi(strings.TrimSpace(m.form.fields[2].input.Value()))
+		if err != nil || completed < 0 {
+			m.status = "completed sessions harus angka >= 0"
+			return m, nil
+		}
+		desc := strings.TrimSpace(m.form.fields[3].input.Value())
+		if err := m.editTask(task.ID, title, desc, target, completed); err != nil {
 			m.status = err.Error()
 			return m, nil
 		}
@@ -799,12 +805,14 @@ func (m *Model) addTask(title, desc string, target int) error {
 	return m.store.SaveTasks(m.tasks)
 }
 
-func (m *Model) editTask(id int, title, desc string, target int) error {
+func (m *Model) editTask(id int, title, desc string, target int, completed int) error {
 	for i := range m.tasks.Tasks {
 		if m.tasks.Tasks[i].ID == id {
 			m.tasks.Tasks[i].Title = title
 			m.tasks.Tasks[i].Description = desc
 			m.tasks.Tasks[i].TargetSessions = target
+			m.tasks.Tasks[i].CompletedPomodoros = completed
+			m.tasks.Tasks[i].Done = completed >= target
 			m.tasks.Tasks[i].UpdatedAt = time.Now()
 			return m.store.SaveTasks(m.tasks)
 		}

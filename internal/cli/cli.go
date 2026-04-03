@@ -96,7 +96,7 @@ func printHelp() {
 	fmt.Println("Commands:")
 	fmt.Println("  task add <title> [--target N] [--desc text]")
 	fmt.Println("  task list")
-	fmt.Println("  task edit <id> [--title text] [--target N] [--desc text]")
+	fmt.Println("  task edit <id> [--title text] [--target N] [--completed N] [--desc text]")
 	fmt.Println("  task delete <id>")
 	fmt.Println("  task done <id> [true|false]")
 	fmt.Println("  config show")
@@ -258,7 +258,7 @@ func runTask(store *storage.Store, args []string) error {
 		return nil
 	case "edit":
 		if len(args) < 2 {
-			return errors.New("usage: task edit <id> [--title text] [--target N] [--desc text]")
+			return errors.New("usage: task edit <id> [--title text] [--target N] [--completed N] [--desc text]")
 		}
 		id, err := strconv.Atoi(args[1])
 		if err != nil {
@@ -267,6 +267,7 @@ func runTask(store *storage.Store, args []string) error {
 		fs := flag.NewFlagSet("task edit", flag.ContinueOnError)
 		title := fs.String("title", "", "new title")
 		target := fs.Int("target", 0, "new target")
+		completed := fs.Int("completed", -1, "new completed pomodoro sessions")
 		desc := fs.String("desc", "", "new description")
 		if err := fs.Parse(args[2:]); err != nil {
 			return err
@@ -287,9 +288,13 @@ func runTask(store *storage.Store, args []string) error {
 		if *target > 0 {
 			ts.Tasks[idx].TargetSessions = *target
 		}
+		if *completed >= 0 {
+			ts.Tasks[idx].CompletedPomodoros = *completed
+		}
 		if *desc != "" {
 			ts.Tasks[idx].Description = *desc
 		}
+		ts.Tasks[idx].Done = ts.Tasks[idx].CompletedPomodoros >= ts.Tasks[idx].TargetSessions
 		ts.Tasks[idx].UpdatedAt = now
 		if err := store.SaveTasks(ts); err != nil {
 			return err
