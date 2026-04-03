@@ -137,4 +137,3 @@ Data disimpan di:
 ## Catatan
 
 - Hentikan timer dengan `Ctrl+C`.
-- Untuk MVP ini, fitur pause/resume belum interaktif penuh; yang ada saat ini adalah start dan interrupt.
