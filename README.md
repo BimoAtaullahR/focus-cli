@@ -133,7 +133,3 @@ Data disimpan di:
 - `~/.config/focus-cli/tasks.json`
 - `~/.config/focus-cli/config.json`
 - `~/.config/focus-cli/history.json`
-
-## Catatan
-
-- Hentikan timer dengan `Ctrl+C`.
