@@ -13,9 +13,10 @@ import (
 	"time"
 
 	"focus-cli/internal/model"
+	"focus-cli/internal/notify"
 	"focus-cli/internal/pomodoro"
-	"focus-cli/internal/tui"
 	"focus-cli/internal/storage"
+	"focus-cli/internal/tui"
 )
 
 func Run(args []string) error {
@@ -101,9 +102,18 @@ func printHelp() {
 	fmt.Println("  task done <id> [true|false]")
 	fmt.Println("  config show")
 	fmt.Println("  config set [--focus N] [--short N] [--long N] [--long-every N] [--theme name]")
+	fmt.Println("             [--notifications on|off] [--notify-warning-before N]")
+	fmt.Println("             [--notify-desktop on|off] [--notify-sound on|off]")
+	fmt.Println("             [--notify-log on|off] [--notify-log-path path]")
+	fmt.Println("  config notifications show")
+	fmt.Println("  config notifications set [--enabled on|off] [--warning-before N]")
+	fmt.Println("                           [--desktop on|off] [--sound on|off]")
+	fmt.Println("                           [--log on|off] [--log-path path]")
 	fmt.Println("  config key show")
 	fmt.Println("  config key set <action> <key>")
-	fmt.Println("  run [--task ID] [--sessions N]")
+	fmt.Println("  run [--task ID] [--sessions N] [--notifications on|off]")
+	fmt.Println("      [--notify-warning-before N] [--notify-desktop on|off]")
+	fmt.Println("      [--notify-sound on|off] [--notify-log on|off] [--notify-log-path path]")
 	fmt.Println("  timer [--minutes N] [--label text]")
 	fmt.Println("  stats")
 	fmt.Println("")
@@ -369,6 +379,7 @@ func runConfig(store *storage.Store, args []string) error {
 	switch args[0] {
 	case "show":
 		fmt.Printf("focus=%d short=%d long=%d long-every=%d theme=%s\n", cfg.FocusMinutes, cfg.ShortBreakMinutes, cfg.LongBreakMinutes, cfg.LongBreakEvery, cfg.Theme)
+		printNotifications(cfg)
 		return nil
 	case "set":
 		fs := flag.NewFlagSet("config set", flag.ContinueOnError)
@@ -377,8 +388,17 @@ func runConfig(store *storage.Store, args []string) error {
 		long := fs.Int("long", 0, "long break minutes")
 		longEvery := fs.Int("long-every", 0, "long break every n focus sessions")
 		theme := fs.String("theme", "", "theme preset: sunrise|forest|mono")
+		notifEnabled := fs.String("notifications", "", "notifications on|off")
+		notifyWarningBefore := fs.Int("notify-warning-before", 0, "warning minutes before end")
+		notifyDesktop := fs.String("notify-desktop", "", "desktop notification on|off")
+		notifySound := fs.String("notify-sound", "", "sound notification on|off")
+		notifyLog := fs.String("notify-log", "", "log notification on|off")
+		notifyLogPath := fs.String("notify-log-path", "", "notification log file path")
 		if err := fs.Parse(args[1:]); err != nil {
 			return err
+		}
+		if cfg.Notifications == nil {
+			cfg.Notifications = model.DefaultNotificationConfig()
 		}
 		if *focus > 0 {
 			cfg.FocusMinutes = *focus
@@ -397,6 +417,52 @@ func runConfig(store *storage.Store, args []string) error {
 			if cfg.Theme != "sunrise" && cfg.Theme != "forest" && cfg.Theme != "mono" {
 				return errors.New("theme must be one of: sunrise, forest, mono")
 			}
+		}
+		if *notifyWarningBefore > 0 {
+			cfg.Notifications.WarningMinutesBefore = *notifyWarningBefore
+		}
+		if *notifyLogPath != "" {
+			if cfg.Notifications.LogFile == nil {
+				cfg.Notifications.LogFile = model.NewLogFileNotifConfig()
+			}
+			cfg.Notifications.LogFile.Path = strings.TrimSpace(*notifyLogPath)
+		}
+		if *notifEnabled != "" {
+			v, err := parseOnOff(*notifEnabled)
+			if err != nil {
+				return fmt.Errorf("--notifications: %w", err)
+			}
+			cfg.Notifications.Enabled = v
+		}
+		if *notifyDesktop != "" {
+			v, err := parseOnOff(*notifyDesktop)
+			if err != nil {
+				return fmt.Errorf("--notify-desktop: %w", err)
+			}
+			if cfg.Notifications.Desktop == nil {
+				cfg.Notifications.Desktop = model.NewDesktopNotifConfig()
+			}
+			cfg.Notifications.Desktop.Enabled = v
+		}
+		if *notifySound != "" {
+			v, err := parseOnOff(*notifySound)
+			if err != nil {
+				return fmt.Errorf("--notify-sound: %w", err)
+			}
+			if cfg.Notifications.Sound == nil {
+				cfg.Notifications.Sound = model.NewSoundNotifConfig()
+			}
+			cfg.Notifications.Sound.Enabled = v
+		}
+		if *notifyLog != "" {
+			v, err := parseOnOff(*notifyLog)
+			if err != nil {
+				return fmt.Errorf("--notify-log: %w", err)
+			}
+			if cfg.Notifications.LogFile == nil {
+				cfg.Notifications.LogFile = model.NewLogFileNotifConfig()
+			}
+			cfg.Notifications.LogFile.Enabled = v
 		}
 		if cfg.FocusMinutes < 1 || cfg.ShortBreakMinutes < 1 || cfg.LongBreakMinutes < 1 || cfg.LongBreakEvery < 1 {
 			return errors.New("all config values must be >= 1")
@@ -434,9 +500,106 @@ func runConfig(store *storage.Store, args []string) error {
 		default:
 			return errors.New("usage: config key <show|set>")
 		}
+	case "notifications", "notif":
+		if len(args) < 2 {
+			return errors.New("usage: config notifications <show|set>")
+		}
+		ensureNotifications(&cfg)
+		switch args[1] {
+		case "show":
+			printNotifications(cfg)
+			return nil
+		case "set":
+			fs := flag.NewFlagSet("config notifications set", flag.ContinueOnError)
+			enabled := fs.String("enabled", "", "notifications on|off")
+			warning := fs.Int("warning-before", 0, "warning minutes before end")
+			desktop := fs.String("desktop", "", "desktop notification on|off")
+			sound := fs.String("sound", "", "sound notification on|off")
+			logEnabled := fs.String("log", "", "log notification on|off")
+			logPath := fs.String("log-path", "", "notification log file path")
+			if err := fs.Parse(args[2:]); err != nil {
+				return err
+			}
+			if *enabled != "" {
+				v, err := parseOnOff(*enabled)
+				if err != nil {
+					return fmt.Errorf("--enabled: %w", err)
+				}
+				cfg.Notifications.Enabled = v
+			}
+			if *warning > 0 {
+				cfg.Notifications.WarningMinutesBefore = *warning
+			}
+			if *desktop != "" {
+				v, err := parseOnOff(*desktop)
+				if err != nil {
+					return fmt.Errorf("--desktop: %w", err)
+				}
+				cfg.Notifications.Desktop.Enabled = v
+			}
+			if *sound != "" {
+				v, err := parseOnOff(*sound)
+				if err != nil {
+					return fmt.Errorf("--sound: %w", err)
+				}
+				cfg.Notifications.Sound.Enabled = v
+			}
+			if *logEnabled != "" {
+				v, err := parseOnOff(*logEnabled)
+				if err != nil {
+					return fmt.Errorf("--log: %w", err)
+				}
+				cfg.Notifications.LogFile.Enabled = v
+			}
+			if *logPath != "" {
+				cfg.Notifications.LogFile.Path = strings.TrimSpace(*logPath)
+			}
+			if err := store.SaveConfig(cfg); err != nil {
+				return err
+			}
+			fmt.Println("notification config saved")
+			printNotifications(cfg)
+			return nil
+		default:
+			return errors.New("usage: config notifications <show|set>")
+		}
 	default:
 		return fmt.Errorf("unknown config command: %s", args[0])
 	}
+}
+
+func ensureNotifications(cfg *model.Config) {
+	if cfg.Notifications == nil {
+		cfg.Notifications = model.DefaultNotificationConfig()
+	}
+	if cfg.Notifications.Desktop == nil {
+		cfg.Notifications.Desktop = model.NewDesktopNotifConfig()
+	}
+	if cfg.Notifications.Sound == nil {
+		cfg.Notifications.Sound = model.NewSoundNotifConfig()
+	}
+	if cfg.Notifications.LogFile == nil {
+		cfg.Notifications.LogFile = model.NewLogFileNotifConfig()
+	}
+}
+
+func printNotifications(cfg model.Config) {
+	if cfg.Notifications == nil {
+		cfg.Notifications = model.DefaultNotificationConfig()
+	}
+	fmt.Printf("notifications=%v warning-before=%d desktop=%v sound=%v log=%v log-path=%s\n",
+		cfg.Notifications.Enabled,
+		cfg.Notifications.WarningMinutesBefore,
+		cfg.Notifications.Desktop != nil && cfg.Notifications.Desktop.Enabled,
+		cfg.Notifications.Sound != nil && cfg.Notifications.Sound.Enabled,
+		cfg.Notifications.LogFile != nil && cfg.Notifications.LogFile.Enabled,
+		func() string {
+			if cfg.Notifications.LogFile == nil {
+				return ""
+			}
+			return cfg.Notifications.LogFile.Path
+		}(),
+	)
 }
 
 func setKeybinding(cfg *model.Config, action, value string) error {
@@ -481,10 +644,27 @@ func setKeybinding(cfg *model.Config, action, value string) error {
 	return nil
 }
 
+func parseOnOff(v string) (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "on", "true", "1", "yes", "y":
+		return true, nil
+	case "off", "false", "0", "no", "n":
+		return false, nil
+	default:
+		return false, errors.New("must be on|off")
+	}
+}
+
 func runPomodoro(store *storage.Store, args []string) error {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	taskID := fs.Int("task", 0, "task id")
 	sessions := fs.Int("sessions", 1, "number of focus sessions")
+	notifEnabled := fs.String("notifications", "", "notifications on|off")
+	notifyWarningBefore := fs.Int("notify-warning-before", 0, "warning minutes before end")
+	notifyDesktop := fs.String("notify-desktop", "", "desktop notification on|off")
+	notifySound := fs.String("notify-sound", "", "sound notification on|off")
+	notifyLog := fs.String("notify-log", "", "log notification on|off")
+	notifyLogPath := fs.String("notify-log-path", "", "notification log file path")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -496,6 +676,57 @@ func runPomodoro(store *storage.Store, args []string) error {
 	if err != nil {
 		return err
 	}
+	if cfg.Notifications == nil {
+		cfg.Notifications = model.DefaultNotificationConfig()
+	}
+	if *notifyWarningBefore > 0 {
+		cfg.Notifications.WarningMinutesBefore = *notifyWarningBefore
+	}
+	if *notifyLogPath != "" {
+		if cfg.Notifications.LogFile == nil {
+			cfg.Notifications.LogFile = model.NewLogFileNotifConfig()
+		}
+		cfg.Notifications.LogFile.Path = strings.TrimSpace(*notifyLogPath)
+	}
+	if *notifEnabled != "" {
+		v, err := parseOnOff(*notifEnabled)
+		if err != nil {
+			return fmt.Errorf("--notifications: %w", err)
+		}
+		cfg.Notifications.Enabled = v
+	}
+	if *notifyDesktop != "" {
+		v, err := parseOnOff(*notifyDesktop)
+		if err != nil {
+			return fmt.Errorf("--notify-desktop: %w", err)
+		}
+		if cfg.Notifications.Desktop == nil {
+			cfg.Notifications.Desktop = model.NewDesktopNotifConfig()
+		}
+		cfg.Notifications.Desktop.Enabled = v
+	}
+	if *notifySound != "" {
+		v, err := parseOnOff(*notifySound)
+		if err != nil {
+			return fmt.Errorf("--notify-sound: %w", err)
+		}
+		if cfg.Notifications.Sound == nil {
+			cfg.Notifications.Sound = model.NewSoundNotifConfig()
+		}
+		cfg.Notifications.Sound.Enabled = v
+	}
+	if *notifyLog != "" {
+		v, err := parseOnOff(*notifyLog)
+		if err != nil {
+			return fmt.Errorf("--notify-log: %w", err)
+		}
+		if cfg.Notifications.LogFile == nil {
+			cfg.Notifications.LogFile = model.NewLogFileNotifConfig()
+		}
+		cfg.Notifications.LogFile.Enabled = v
+	}
+	notifier := notify.NewManagerFromConfig(cfg.Notifications)
+	defer notifier.Close()
 	ts, err := store.LoadTasks()
 	if err != nil {
 		return err
@@ -510,18 +741,40 @@ func runPomodoro(store *storage.Store, args []string) error {
 
 	for i := 1; i <= *sessions; i++ {
 		fmt.Printf("\nFocus session %d/%d\n", i, *sessions)
+		warnTimer := scheduleWarningNotification(ctx, notifier, cfg.Notifications, *taskID, i, "focus", cfg.FocusMinutes)
 		s, e, done, runErr := pomodoro.Countdown(ctx, "FOCUS", cfg.FocusMinutes)
+		if warnTimer != nil {
+			warnTimer.Stop()
+		}
 		history = append(history, model.SessionHistory{StartedAt: s, EndedAt: e, TaskID: *taskID, Type: "focus", Completed: done})
 		if runErr != nil {
 			_ = store.SaveHistory(history)
 			return fmt.Errorf("interrupted")
 		}
+		_ = notifier.SendNotification(ctx, model.NotificationEvent{
+			Type:       model.NotificationFocusComplete,
+			Timestamp:  time.Now(),
+			SessionNum: i,
+			PhaseType:  "focus",
+			TaskID:     *taskID,
+			Message:    "Sesi fokus selesai. Saatnya istirahat.",
+		})
 
 		if *taskID > 0 {
 			for ti := range ts.Tasks {
 				if ts.Tasks[ti].ID == *taskID {
 					ts.Tasks[ti].CompletedPomodoros++
 					ts.Tasks[ti].UpdatedAt = time.Now()
+					if ts.Tasks[ti].TargetSessions > 0 && ts.Tasks[ti].CompletedPomodoros >= ts.Tasks[ti].TargetSessions {
+						ts.Tasks[ti].Done = true
+						_ = notifier.SendNotification(ctx, model.NotificationEvent{
+							Type:       model.NotificationTaskComplete,
+							Timestamp:  time.Now(),
+							SessionNum: i,
+							TaskID:     *taskID,
+							Message:    "Semua sesi task selesai.",
+						})
+					}
 				}
 			}
 		}
@@ -537,13 +790,25 @@ func runPomodoro(store *storage.Store, args []string) error {
 			label = "LONG BREAK"
 		}
 		fmt.Printf("\n%s\n", label)
+		warnTimer = scheduleWarningNotification(ctx, notifier, cfg.Notifications, *taskID, i, strings.ToLower(strings.ReplaceAll(label, " ", "_")), breakMin)
 		s, e, done, runErr = pomodoro.Countdown(ctx, label, breakMin)
+		if warnTimer != nil {
+			warnTimer.Stop()
+		}
 		history = append(history, model.SessionHistory{StartedAt: s, EndedAt: e, TaskID: *taskID, Type: strings.ToLower(strings.ReplaceAll(label, " ", "_")), Completed: done})
 		if runErr != nil {
 			_ = store.SaveHistory(history)
 			_ = store.SaveTasks(ts)
 			return fmt.Errorf("interrupted")
 		}
+		_ = notifier.SendNotification(ctx, model.NotificationEvent{
+			Type:       model.NotificationBreakComplete,
+			Timestamp:  time.Now(),
+			SessionNum: i,
+			PhaseType:  strings.ToLower(strings.ReplaceAll(label, " ", "_")),
+			TaskID:     *taskID,
+			Message:    "Waktu istirahat selesai. Kembali fokus.",
+		})
 	}
 
 	if err := store.SaveHistory(history); err != nil {
@@ -575,6 +840,27 @@ func runSingleTimer(args []string) error {
 	}
 	fmt.Println("timer finished")
 	return nil
+}
+
+func scheduleWarningNotification(ctx context.Context, notifier *notify.Manager, cfg *model.NotificationConfig, taskID, sessionNum int, phaseType string, phaseMinutes int) *time.Timer {
+	if notifier == nil || cfg == nil || !cfg.Enabled || cfg.WarningMinutesBefore <= 0 {
+		return nil
+	}
+	warnAfter := time.Duration(phaseMinutes-cfg.WarningMinutesBefore) * time.Minute
+	if warnAfter <= 0 {
+		return nil
+	}
+	warnMin := cfg.WarningMinutesBefore
+	return time.AfterFunc(warnAfter, func() {
+		_ = notifier.SendNotification(ctx, model.NotificationEvent{
+			Type:       model.NotificationSessionWarn,
+			Timestamp:  time.Now(),
+			SessionNum: sessionNum,
+			PhaseType:  phaseType,
+			TaskID:     taskID,
+			Message:    fmt.Sprintf("Sisa %s %d menit.", strings.ReplaceAll(phaseType, "_", " "), warnMin),
+		})
+	})
 }
 
 func runStats(store *storage.Store) error {

@@ -17,6 +17,7 @@ Pomodoro app berbasis terminal Linux, ditulis dengan Go (hasil dari vibe coding 
 - Dashboard interaktif terminal
 - Theme preset (sunrise, forest, mono)
 - Keybinding customization via config
+- Notifikasi sesi: warning sebelum waktu habis, fokus/break selesai, dan task selesai
 
 ## Build
 
@@ -85,11 +86,77 @@ focus task delete 1
 ```bash
 focus config show
 focus config set --focus 25 --short 5 --long 15 --long-every 4 --theme forest
+focus config set --notifications on --notify-warning-before 5
+focus config set --notify-desktop on --notify-sound on
+focus config set --notify-log on --notify-log-path ~/.config/focus-cli/notifications.log
+focus config notifications show
+focus config notifications set --enabled on --warning-before 3 --desktop on --sound on --log off
 focus config key show
 focus config key set nav_up w
 focus config key set nav_down s
 focus config key set start_cycle enter
 ```
+
+### Notifikasi
+
+`focus-cli` mendukung notifikasi berikut:
+
+- warning saat sesi hampir habis (default: 5 menit sebelum selesai)
+- notifikasi saat sesi fokus selesai (mulai break)
+- notifikasi saat break selesai (mulai sesi berikutnya)
+- notifikasi saat seluruh sesi pada task selesai
+
+Tipe notifikasi yang tersedia:
+
+- desktop notification (Linux desktop environment)
+- sound notification (bell terminal / suara)
+- logging event notifikasi ke file
+
+Konfigurasi cepat via command `config notifications`:
+
+```bash
+focus config notifications show
+focus config notifications set --enabled on --warning-before 5
+focus config notifications set --desktop on --sound on
+focus config notifications set --log on --log-path ~/.config/focus-cli/notifications.log
+```
+
+Override sekali jalan saat run (tanpa mengubah config permanen):
+
+```bash
+focus run --task 1 --sessions 4 --notify-warning-before 2 --notify-sound off
+```
+
+#### Setup Sound Notification
+
+Suara notifikasi sudah tersedia secara otomatis! Saat kamu pertama kali menjalankan aplikasi, file notifikasi akan otomatis dikonfigurasi.
+
+**Bagaimana cara kerjanya:**
+1. Saat aplikasi dijalankan, file `notification.wav` otomatis diekstrak ke `~/.config/focus-cli/`
+2. Config notifikasi suara sudah otomatis menunjuk ke file tersebut
+3. Kamu langsung bisa mendengar suara notifikasi
+
+**Untuk menggunakan custom sound file:**
+
+Edit `~/.config/focus-cli/config.json` dan ubah path `sound_file` ke file audio custom kamu:
+
+```json
+{
+  "notifications": {
+    "enabled": true,
+    "sound": {
+      "enabled": true,
+      "sound_file": "/path/to/custom/notification.wav"
+    }
+  }
+}
+```
+
+**Tips untuk mendengar suara:**
+- Pastikan ffmpeg terinstall untuk audio playback: `pacman -S ffmpeg` (Arch) atau `apt install ffmpeg` (Debian/Ubuntu)
+- Verifikasi volume system tidak muted: cek dengan `pactl list sinks` atau pengaturan audio
+- Test ffplay with custom file: `ffplay -nodisp -autoexit /path/to/audio.wav`
+- Jika audio masih tidak terdengar, check bahwa file path benar dan akses readable
 
 ### Timer
 

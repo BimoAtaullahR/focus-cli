@@ -19,13 +19,54 @@ type TaskStore struct {
 }
 
 type Config struct {
-	FocusMinutes      int `json:"focus_minutes"`
-	ShortBreakMinutes int `json:"short_break_minutes"`
-	LongBreakMinutes  int `json:"long_break_minutes"`
-	LongBreakEvery    int `json:"long_break_every"`
-	Theme             string `json:"theme"`
-	Keys              Keys   `json:"keys"`
+	FocusMinutes      int                 `json:"focus_minutes"`
+	ShortBreakMinutes int                 `json:"short_break_minutes"`
+	LongBreakMinutes  int                 `json:"long_break_minutes"`
+	LongBreakEvery    int                 `json:"long_break_every"`
+	Theme             string              `json:"theme"`
+	Keys              Keys                `json:"keys"`
+	Notifications     *NotificationConfig `json:"notifications,omitempty"`
 }
+
+type NotificationConfig struct {
+	Enabled              bool                `json:"enabled"`
+	WarningMinutesBefore int                 `json:"warning_minutes_before"`
+	Desktop              *DesktopNotifConfig `json:"desktop,omitempty"`
+	Sound                *SoundNotifConfig   `json:"sound,omitempty"`
+	LogFile              *LogFileNotifConfig `json:"log_file,omitempty"`
+}
+
+type DesktopNotifConfig struct {
+	Enabled    bool `json:"enabled"`
+	UseTimeout bool `json:"use_timeout"`
+	TimeoutMS  int  `json:"timeout_ms"`
+}
+
+type SoundNotifConfig struct {
+	Enabled   bool   `json:"enabled"`
+	SoundFile string `json:"sound_file,omitempty"`
+}
+
+type LogFileNotifConfig struct {
+	Enabled bool   `json:"enabled"`
+	Path    string `json:"path,omitempty"`
+}
+
+type NotificationEvent struct {
+	Type       string    `json:"type"`
+	Timestamp  time.Time `json:"timestamp"`
+	SessionNum int       `json:"session_num,omitempty"`
+	PhaseType  string    `json:"phase_type,omitempty"`
+	TaskID     int       `json:"task_id,omitempty"`
+	Message    string    `json:"message,omitempty"`
+}
+
+const (
+	NotificationFocusComplete = "focus_complete"
+	NotificationBreakComplete = "break_complete"
+	NotificationTaskComplete  = "task_complete"
+	NotificationSessionWarn   = "session_warning"
+)
 
 type Keys struct {
 	NavUp       string `json:"nav_up"`
@@ -63,6 +104,7 @@ func DefaultConfig() Config {
 		LongBreakEvery:    4,
 		Theme:             "sunrise",
 		Keys:              DefaultKeys(),
+		Notifications:     DefaultNotificationConfig(),
 	}
 }
 
@@ -85,6 +127,38 @@ func DefaultKeys() Keys {
 		Pause:       "p",
 		EndPhase:    "x",
 		NextPhase:   "n",
+	}
+}
+
+func DefaultNotificationConfig() *NotificationConfig {
+	return &NotificationConfig{
+		Enabled:              true,
+		WarningMinutesBefore: 5,
+		Desktop:              NewDesktopNotifConfig(),
+		Sound:                NewSoundNotifConfig(),
+		LogFile:              NewLogFileNotifConfig(),
+	}
+}
+
+func NewDesktopNotifConfig() *DesktopNotifConfig {
+	return &DesktopNotifConfig{
+		Enabled:    true,
+		UseTimeout: true,
+		TimeoutMS:  5000,
+	}
+}
+
+func NewSoundNotifConfig() *SoundNotifConfig {
+	return &SoundNotifConfig{
+		Enabled:   true,
+		SoundFile: "",
+	}
+}
+
+func NewLogFileNotifConfig() *LogFileNotifConfig {
+	return &LogFileNotifConfig{
+		Enabled: false,
+		Path:    "",
 	}
 }
 
@@ -155,6 +229,23 @@ func NormalizeConfig(cfg Config) Config {
 	}
 	if cfg.Keys.NextPhase == "" {
 		cfg.Keys.NextPhase = def.Keys.NextPhase
+	}
+	if cfg.Notifications == nil {
+		cfg.Notifications = def.Notifications
+	} else {
+		// Normalize notification sub-configs
+		if cfg.Notifications.WarningMinutesBefore <= 0 {
+			cfg.Notifications.WarningMinutesBefore = def.Notifications.WarningMinutesBefore
+		}
+		if cfg.Notifications.Desktop == nil {
+			cfg.Notifications.Desktop = def.Notifications.Desktop
+		}
+		if cfg.Notifications.Sound == nil {
+			cfg.Notifications.Sound = def.Notifications.Sound
+		}
+		if cfg.Notifications.LogFile == nil {
+			cfg.Notifications.LogFile = def.Notifications.LogFile
+		}
 	}
 	return cfg
 }

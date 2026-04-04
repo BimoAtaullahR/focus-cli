@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"focus-cli/internal/model"
+	"focus-cli/internal/notify"
 	"focus-cli/internal/storage"
 )
 
@@ -54,15 +56,16 @@ type confirmState struct {
 }
 
 type runState struct {
-	phase         runPhase
-	label         string
-	remaining     time.Duration
-	phaseDuration time.Duration
-	startedAt     time.Time
-	taskID        int
-	sessionIndex  int
-	totalSessions int
-	paused        bool
+	phase           runPhase
+	label           string
+	remaining       time.Duration
+	phaseDuration   time.Duration
+	startedAt       time.Time
+	taskID          int
+	sessionIndex    int
+	totalSessions   int
+	paused          bool
+	notifiedWarning bool
 }
 
 type Model struct {
@@ -76,26 +79,27 @@ type Model struct {
 	cursor int
 	mode   int
 
-	status string
-	form   *formState
-	confirm *confirmState
-	run    *runState
-	tickID int
-	ready  bool
+	status   string
+	form     *formState
+	confirm  *confirmState
+	run      *runState
+	tickID   int
+	ready    bool
+	notifier *notify.Manager
 }
 
 var (
-	appTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205"))
-	panelStyle    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("240")).Padding(0, 1)
-	selectedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("229")).Background(lipgloss.Color("62")).Bold(true)
+	appTitleStyle     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205"))
+	panelStyle        = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("240")).Padding(0, 1)
+	selectedStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("229")).Background(lipgloss.Color("62")).Bold(true)
 	selectedDoneStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("229")).Background(lipgloss.Color("62")).Bold(true).Strikethrough(true)
 	doneTaskStyle     = lipgloss.NewStyle().Strikethrough(true)
-	dimStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	helpStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("246"))
-	accentStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("99")).Bold(true)
-	goodStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
-	warnStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
-	badStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("203"))
+	dimStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	helpStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("246"))
+	accentStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("99")).Bold(true)
+	goodStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
+	warnStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
+	badStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color("203"))
 )
 
 func applyTheme(theme string) {
@@ -172,7 +176,8 @@ func Run(store *storage.Store) error {
 		return err
 	}
 	applyTheme(config.Theme)
-	m := &Model{store: store, tasks: tasks, config: config, history: history, status: "ready"}
+	m := &Model{store: store, tasks: tasks, config: config, history: history, status: "ready", notifier: notify.NewManagerFromConfig(config.Notifications)}
+	defer m.notifier.Close()
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		return err
@@ -237,20 +242,32 @@ func runTickCmd(token int) tea.Cmd {
 	})
 }
 
+func (m *Model) notifyAsync(event model.NotificationEvent) {
+	if m.notifier == nil || m.config.Notifications == nil || !m.config.Notifications.Enabled {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		_ = m.notifier.SendNotification(ctx, event)
+	}()
+}
+
 func (m *Model) beginFocusCycle(taskID, totalSessions int) (tea.Model, tea.Cmd) {
 	if totalSessions < 1 {
 		totalSessions = 1
 	}
 	m.run = &runState{
-		phase:         runPhaseFocus,
-		label:         "FOCUS",
-		remaining:     time.Duration(m.config.FocusMinutes) * time.Minute,
-		phaseDuration: time.Duration(m.config.FocusMinutes) * time.Minute,
-		startedAt:     time.Now(),
-		taskID:        taskID,
-		sessionIndex:  1,
-		totalSessions: totalSessions,
-		paused:        false,
+		phase:           runPhaseFocus,
+		label:           "FOCUS",
+		remaining:       time.Duration(m.config.FocusMinutes) * time.Minute,
+		phaseDuration:   time.Duration(m.config.FocusMinutes) * time.Minute,
+		startedAt:       time.Now(),
+		taskID:          taskID,
+		sessionIndex:    1,
+		totalSessions:   totalSessions,
+		paused:          false,
+		notifiedWarning: false,
 	}
 	m.mode = modeRunning
 	m.status = fmt.Sprintf("Semangat! Fokus sesi 1/%d dimulai.", totalSessions)
@@ -275,6 +292,7 @@ func (m *Model) beginBreakPhase(breakType string) (tea.Model, tea.Cmd) {
 	m.run.phaseDuration = time.Duration(minutes) * time.Minute
 	m.run.startedAt = time.Now()
 	m.run.paused = false
+	m.run.notifiedWarning = false
 	if breakType == "long" {
 		m.status = "Hebat! Saatnya long break untuk isi ulang energi."
 	} else {
@@ -298,12 +316,22 @@ func (m *Model) finishFocusSession(manual bool) (tea.Model, tea.Cmd) {
 	}
 	m.history = append(m.history, history)
 	_ = m.store.SaveHistory(m.history)
+	m.notifyAsync(model.NotificationEvent{
+		Type:       model.NotificationFocusComplete,
+		Timestamp:  time.Now(),
+		SessionNum: m.run.sessionIndex,
+		PhaseType:  "focus",
+		TaskID:     m.run.taskID,
+		Message:    "Sesi fokus selesai. Saatnya istirahat.",
+	})
+	isTaskComplete := false
 	if m.run.taskID > 0 {
 		for i := range m.tasks.Tasks {
 			if m.tasks.Tasks[i].ID == m.run.taskID {
 				m.tasks.Tasks[i].CompletedPomodoros++
 				if m.tasks.Tasks[i].TargetSessions > 0 && m.tasks.Tasks[i].CompletedPomodoros >= m.tasks.Tasks[i].TargetSessions {
 					m.tasks.Tasks[i].Done = true
+					isTaskComplete = true
 					achievementMsg = fmt.Sprintf("Luar biasa! Task '%s' selesai 100%%. Kerja bagus!", m.tasks.Tasks[i].Title)
 				}
 				m.tasks.Tasks[i].UpdatedAt = time.Now()
@@ -311,6 +339,15 @@ func (m *Model) finishFocusSession(manual bool) (tea.Model, tea.Cmd) {
 			}
 		}
 		_ = m.store.SaveTasks(m.tasks)
+	}
+	if isTaskComplete {
+		m.notifyAsync(model.NotificationEvent{
+			Type:       model.NotificationTaskComplete,
+			Timestamp:  time.Now(),
+			SessionNum: m.run.sessionIndex,
+			TaskID:     m.run.taskID,
+			Message:    "Semua sesi task selesai.",
+		})
 	}
 	if m.run.sessionIndex >= m.run.totalSessions {
 		m.status = "Mantap! Satu cycle pomodoro berhasil kamu selesaikan."
@@ -348,6 +385,14 @@ func (m *Model) finishBreakSession(skip bool) (tea.Model, tea.Cmd) {
 	}
 	m.history = append(m.history, history)
 	_ = m.store.SaveHistory(m.history)
+	m.notifyAsync(model.NotificationEvent{
+		Type:       model.NotificationBreakComplete,
+		Timestamp:  time.Now(),
+		SessionNum: m.run.sessionIndex,
+		PhaseType:  strings.ToLower(strings.ReplaceAll(m.run.label, " ", "_")),
+		TaskID:     m.run.taskID,
+		Message:    "Waktu istirahat selesai. Kembali fokus.",
+	})
 	if m.run.sessionIndex < m.run.totalSessions {
 		m.run.sessionIndex++
 		if skip {
@@ -361,6 +406,7 @@ func (m *Model) finishBreakSession(skip bool) (tea.Model, tea.Cmd) {
 		m.run.phaseDuration = time.Duration(m.config.FocusMinutes) * time.Minute
 		m.run.startedAt = time.Now()
 		m.run.paused = false
+		m.run.notifiedWarning = false
 		m.tickID++
 		return m, runTickCmd(m.tickID)
 	}
@@ -515,6 +561,20 @@ func (m *Model) handleRunTick(msg runTickMsg) (tea.Model, tea.Cmd) {
 		return m, runTickCmd(m.tickID)
 	}
 	m.run.remaining -= time.Second
+	if m.run.phase == runPhaseFocus && !m.run.notifiedWarning && m.config.Notifications != nil {
+		warnAt := time.Duration(m.config.Notifications.WarningMinutesBefore) * time.Minute
+		if warnAt > 0 && m.run.remaining > 0 && m.run.remaining <= warnAt {
+			m.run.notifiedWarning = true
+			m.notifyAsync(model.NotificationEvent{
+				Type:       model.NotificationSessionWarn,
+				Timestamp:  time.Now(),
+				SessionNum: m.run.sessionIndex,
+				PhaseType:  "focus",
+				TaskID:     m.run.taskID,
+				Message:    fmt.Sprintf("Sisa fokus %d menit.", m.config.Notifications.WarningMinutesBefore),
+			})
+		}
+	}
 	if m.run.remaining <= 0 {
 		if m.run.phase == runPhaseFocus {
 			return m.finishFocusSession(false)

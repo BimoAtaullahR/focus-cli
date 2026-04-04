@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +10,9 @@ import (
 
 	"focus-cli/internal/model"
 )
+
+//go:embed assets/sounds/*.wav
+var soundFiles embed.FS
 
 type Store struct {
 	baseDir string
@@ -23,6 +27,13 @@ func NewStore() (*Store, error) {
 	if err := os.MkdirAll(baseDir, 0o755); err != nil {
 		return nil, fmt.Errorf("create data dir: %w", err)
 	}
+
+	// Ensure sound files are available
+	if err := ensureSoundFiles(baseDir); err != nil {
+		// Log but don't fail if sound setup fails
+		fmt.Fprintf(os.Stderr, "Warning: could not setup sound files: %v\n", err)
+	}
+
 	return &Store{baseDir: baseDir}, nil
 }
 
@@ -65,7 +76,12 @@ func (s *Store) LoadConfig() (model.Config, error) {
 	var out model.Config
 	b, err := os.ReadFile(s.configPath())
 	if errors.Is(err, os.ErrNotExist) {
-		return model.DefaultConfig(), nil
+		cfg := model.DefaultConfig()
+		// Set sound file path to bundled notification sound
+		if cfg.Notifications != nil && cfg.Notifications.Sound != nil {
+			cfg.Notifications.Sound.SoundFile = s.GetSoundFilePath()
+		}
+		return cfg, nil
 	}
 	if err != nil {
 		return out, fmt.Errorf("read config: %w", err)
@@ -73,7 +89,12 @@ func (s *Store) LoadConfig() (model.Config, error) {
 	if err := json.Unmarshal(b, &out); err != nil {
 		return out, fmt.Errorf("parse config: %w", err)
 	}
-	return model.NormalizeConfig(out), nil
+	out = model.NormalizeConfig(out)
+	// Auto-set sound file if empty
+	if out.Notifications != nil && out.Notifications.Sound != nil && out.Notifications.Sound.SoundFile == "" {
+		out.Notifications.Sound.SoundFile = s.GetSoundFilePath()
+	}
+	return out, nil
 }
 
 func (s *Store) SaveConfig(cfg model.Config) error {
@@ -112,4 +133,32 @@ func (s *Store) writeJSON(path string, v any) error {
 		return fmt.Errorf("atomic replace: %w", err)
 	}
 	return nil
+}
+
+// ensureSoundFiles copies embedded sound files to config directory on first run
+func ensureSoundFiles(baseDir string) error {
+	soundPath := filepath.Join(baseDir, "notification.wav")
+
+	// If sound file already exists, skip
+	if _, err := os.Stat(soundPath); err == nil {
+		return nil
+	}
+
+	// Read embedded notification.wav
+	data, err := soundFiles.ReadFile("assets/sounds/notification.wav")
+	if err != nil {
+		return fmt.Errorf("read embedded sound file: %w", err)
+	}
+
+	// Write to config directory
+	if err := os.WriteFile(soundPath, data, 0o644); err != nil {
+		return fmt.Errorf("write sound file: %w", err)
+	}
+
+	return nil
+}
+
+// GetSoundFilePath returns the path to the default notification sound file
+func (s *Store) GetSoundFilePath() string {
+	return filepath.Join(s.baseDir, "notification.wav")
 }
