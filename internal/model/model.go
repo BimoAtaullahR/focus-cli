@@ -9,6 +9,10 @@ type Task struct {
 	Done               bool      `json:"done"`
 	TargetSessions     int       `json:"target_sessions"`
 	CompletedPomodoros int       `json:"completed_pomodoros"`
+	TimerPhase         string    `json:"timer_phase,omitempty"`
+	TimerRemainingSec  int       `json:"timer_remaining_sec,omitempty"`
+	TimerSessionIndex  int       `json:"timer_session_index,omitempty"`
+	TimerTotalSessions int       `json:"timer_total_sessions,omitempty"`
 	CreatedAt          time.Time `json:"created_at"`
 	UpdatedAt          time.Time `json:"updated_at"`
 }

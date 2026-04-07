@@ -331,6 +331,10 @@ func (m *Model) finishFocusSession(manual bool) (tea.Model, tea.Cmd) {
 				m.tasks.Tasks[i].CompletedPomodoros++
 				if m.tasks.Tasks[i].TargetSessions > 0 && m.tasks.Tasks[i].CompletedPomodoros >= m.tasks.Tasks[i].TargetSessions {
 					m.tasks.Tasks[i].Done = true
+					m.tasks.Tasks[i].TimerPhase = ""
+					m.tasks.Tasks[i].TimerRemainingSec = 0
+					m.tasks.Tasks[i].TimerSessionIndex = 0
+					m.tasks.Tasks[i].TimerTotalSessions = 0
 					isTaskComplete = true
 					achievementMsg = fmt.Sprintf("Luar biasa! Task '%s' selesai 100%%. Kerja bagus!", m.tasks.Tasks[i].Title)
 				}
@@ -350,6 +354,7 @@ func (m *Model) finishFocusSession(manual bool) (tea.Model, tea.Cmd) {
 		})
 	}
 	if m.run.sessionIndex >= m.run.totalSessions {
+		m.clearTaskTimerProgress(m.run.taskID)
 		m.status = "Mantap! Satu cycle pomodoro berhasil kamu selesaikan."
 		if achievementMsg != "" {
 			m.status = achievementMsg
@@ -411,6 +416,7 @@ func (m *Model) finishBreakSession(skip bool) (tea.Model, tea.Cmd) {
 		return m, runTickCmd(m.tickID)
 	}
 	m.status = "Keren! Semua sesi pada cycle ini sudah tuntas."
+	m.clearTaskTimerProgress(m.run.taskID)
 	m.run = nil
 	m.mode = modeDashboard
 	m.tickID++
@@ -518,6 +524,7 @@ func (m *Model) updateConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m *Model) updateRun(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case keyIs(msg, "ctrl+c", "esc", m.config.Keys.Quit):
+		m.saveCurrentRunProgress()
 		m.status = "Cycle dihentikan. Tidak apa-apa, kamu bisa lanjut kapan saja."
 		m.mode = modeDashboard
 		m.run = nil
@@ -634,6 +641,9 @@ func (m *Model) renderTaskList() string {
 				prefix = "✓ "
 			}
 			content := fmt.Sprintf("%s%s%02d. %s [%d/%d]", marker, prefix, i+1, task.Title, task.CompletedPomodoros, task.TargetSessions)
+			if resume := taskResumeLabel(task); resume != "" {
+				content += " {" + resume + "}"
+			}
 			switch {
 			case i == m.cursor && task.Done:
 				rows = append(rows, selectedDoneStyle.Render(content))
@@ -664,7 +674,11 @@ func (m *Model) renderSummary() string {
 		if remaining < 0 {
 			remaining = 0
 		}
-		selected = fmt.Sprintf("ID: %d\nTitle: %s\nStatus: %s\nProgress: %d/%d\nRemaining sessions: %d\nDesc: %s", task.ID, task.Title, status, task.CompletedPomodoros, task.TargetSessions, remaining, blankIf(task.Description))
+		resume := taskResumeLabel(*task)
+		if resume == "" {
+			resume = "-"
+		}
+		selected = fmt.Sprintf("ID: %d\nTitle: %s\nStatus: %s\nProgress: %d/%d\nRemaining sessions: %d\nResume checkpoint: %s\nDesc: %s", task.ID, task.Title, status, task.CompletedPomodoros, task.TargetSessions, remaining, resume, blankIf(task.Description))
 	}
 	summary := fmt.Sprintf("Config\nFocus: %d min\nShort break: %d min\nLong break: %d min\nLong every: %d\n\nHistory\nFocus done: %d\nBreak sessions: %d", m.config.FocusMinutes, m.config.ShortBreakMinutes, m.config.LongBreakMinutes, m.config.LongBreakEvery, m.countCompletedFocus(), m.countCompletedBreaks())
 	return lipgloss.JoinVertical(lipgloss.Left, panelStyle.Width(34).Render(selected), panelStyle.Width(34).Render(summary))
@@ -873,6 +887,12 @@ func (m *Model) editTask(id int, title, desc string, target int, completed int) 
 			m.tasks.Tasks[i].TargetSessions = target
 			m.tasks.Tasks[i].CompletedPomodoros = completed
 			m.tasks.Tasks[i].Done = completed >= target
+			if m.tasks.Tasks[i].Done {
+				m.tasks.Tasks[i].TimerPhase = ""
+				m.tasks.Tasks[i].TimerRemainingSec = 0
+				m.tasks.Tasks[i].TimerSessionIndex = 0
+				m.tasks.Tasks[i].TimerTotalSessions = 0
+			}
 			m.tasks.Tasks[i].UpdatedAt = time.Now()
 			return m.store.SaveTasks(m.tasks)
 		}
@@ -899,6 +919,12 @@ func (m *Model) toggleTask(id int) {
 	for i := range m.tasks.Tasks {
 		if m.tasks.Tasks[i].ID == id {
 			m.tasks.Tasks[i].Done = !m.tasks.Tasks[i].Done
+			if m.tasks.Tasks[i].Done {
+				m.tasks.Tasks[i].TimerPhase = ""
+				m.tasks.Tasks[i].TimerRemainingSec = 0
+				m.tasks.Tasks[i].TimerSessionIndex = 0
+				m.tasks.Tasks[i].TimerTotalSessions = 0
+			}
 			m.tasks.Tasks[i].UpdatedAt = time.Now()
 			_ = m.store.SaveTasks(m.tasks)
 			if m.tasks.Tasks[i].Done {
@@ -942,6 +968,56 @@ func (m *Model) startSelectedCycle() (tea.Model, tea.Cmd) {
 			m.status = fmt.Sprintf("Task '%s' sudah selesai. Undo dulu dengan %s kalau mau lanjut sesi.", task.Title, m.config.Keys.ToggleDone)
 			return m, nil
 		}
+		if task.TimerRemainingSec > 0 && task.TimerPhase != "" {
+			phase := runPhaseFocus
+			label := "FOCUS"
+			phaseDuration := time.Duration(m.config.FocusMinutes) * time.Minute
+			switch task.TimerPhase {
+			case "short_break":
+				phase = runPhaseBreak
+				label = "SHORT BREAK"
+				phaseDuration = time.Duration(m.config.ShortBreakMinutes) * time.Minute
+			case "long_break":
+				phase = runPhaseBreak
+				label = "LONG BREAK"
+				phaseDuration = time.Duration(m.config.LongBreakMinutes) * time.Minute
+			case "focus":
+				phase = runPhaseFocus
+				label = "FOCUS"
+				phaseDuration = time.Duration(m.config.FocusMinutes) * time.Minute
+			default:
+				phase = runPhaseFocus
+				label = "FOCUS"
+				phaseDuration = time.Duration(m.config.FocusMinutes) * time.Minute
+			}
+			sessionIndex := task.TimerSessionIndex
+			if sessionIndex < 1 {
+				sessionIndex = 1
+			}
+			total := task.TimerTotalSessions
+			if total < sessionIndex {
+				total = sessionIndex
+			}
+			if total < 1 {
+				total = 1
+			}
+			m.run = &runState{
+				phase:           phase,
+				label:           label,
+				remaining:       time.Duration(task.TimerRemainingSec) * time.Second,
+				phaseDuration:   phaseDuration,
+				startedAt:       time.Now(),
+				taskID:          task.ID,
+				sessionIndex:    sessionIndex,
+				totalSessions:   total,
+				paused:          false,
+				notifiedWarning: false,
+			}
+			m.mode = modeRunning
+			m.status = fmt.Sprintf("Melanjutkan timer '%s' dari %02d:%02d.", task.Title, task.TimerRemainingSec/60, task.TimerRemainingSec%60)
+			m.tickID++
+			return m, runTickCmd(m.tickID)
+		}
 		remaining := task.TargetSessions - task.CompletedPomodoros
 		if remaining > 0 {
 			totalSessions = remaining
@@ -949,6 +1025,50 @@ func (m *Model) startSelectedCycle() (tea.Model, tea.Cmd) {
 		return m.beginFocusCycle(task.ID, totalSessions)
 	}
 	return m.beginFocusCycle(0, totalSessions)
+}
+
+func (m *Model) saveCurrentRunProgress() {
+	if m.run == nil || m.run.taskID <= 0 || m.run.remaining <= 0 {
+		return
+	}
+	for i := range m.tasks.Tasks {
+		if m.tasks.Tasks[i].ID != m.run.taskID {
+			continue
+		}
+		phase := "focus"
+		if m.run.phase == runPhaseBreak {
+			if strings.ToUpper(m.run.label) == "LONG BREAK" {
+				phase = "long_break"
+			} else {
+				phase = "short_break"
+			}
+		}
+		m.tasks.Tasks[i].TimerPhase = phase
+		m.tasks.Tasks[i].TimerRemainingSec = int(m.run.remaining / time.Second)
+		m.tasks.Tasks[i].TimerSessionIndex = m.run.sessionIndex
+		m.tasks.Tasks[i].TimerTotalSessions = m.run.totalSessions
+		m.tasks.Tasks[i].UpdatedAt = time.Now()
+		_ = m.store.SaveTasks(m.tasks)
+		return
+	}
+}
+
+func (m *Model) clearTaskTimerProgress(taskID int) {
+	if taskID <= 0 {
+		return
+	}
+	for i := range m.tasks.Tasks {
+		if m.tasks.Tasks[i].ID != taskID {
+			continue
+		}
+		m.tasks.Tasks[i].TimerPhase = ""
+		m.tasks.Tasks[i].TimerRemainingSec = 0
+		m.tasks.Tasks[i].TimerSessionIndex = 0
+		m.tasks.Tasks[i].TimerTotalSessions = 0
+		m.tasks.Tasks[i].UpdatedAt = time.Now()
+		_ = m.store.SaveTasks(m.tasks)
+		return
+	}
 }
 
 func (m *Model) reload() (tea.Model, tea.Cmd) {
@@ -1017,4 +1137,20 @@ func blankIf(value string) string {
 		return "-"
 	}
 	return value
+}
+
+func taskResumeLabel(task model.Task) string {
+	if task.TimerRemainingSec <= 0 || strings.TrimSpace(task.TimerPhase) == "" {
+		return ""
+	}
+	phase := "focus"
+	switch task.TimerPhase {
+	case "short_break":
+		phase = "short break"
+	case "long_break":
+		phase = "long break"
+	case "focus":
+		phase = "focus"
+	}
+	return fmt.Sprintf("resume %02d:%02d %s", task.TimerRemainingSec/60, task.TimerRemainingSec%60, phase)
 }

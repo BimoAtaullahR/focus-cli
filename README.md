@@ -18,6 +18,7 @@ Pomodoro app berbasis terminal Linux, ditulis dengan Go (hasil dari vibe coding 
 - Theme preset (sunrise, forest, mono)
 - Keybinding customization via config
 - Notifikasi sesi: warning sebelum waktu habis, fokus/break selesai, dan task selesai
+- Save & resume progress timer per task (lanjut dari sisa waktu terakhir)
 
 ## Build
 

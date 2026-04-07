@@ -305,6 +305,12 @@ func runTask(store *storage.Store, args []string) error {
 			ts.Tasks[idx].Description = *desc
 		}
 		ts.Tasks[idx].Done = ts.Tasks[idx].CompletedPomodoros >= ts.Tasks[idx].TargetSessions
+		if ts.Tasks[idx].Done {
+			ts.Tasks[idx].TimerPhase = ""
+			ts.Tasks[idx].TimerRemainingSec = 0
+			ts.Tasks[idx].TimerSessionIndex = 0
+			ts.Tasks[idx].TimerTotalSessions = 0
+		}
 		ts.Tasks[idx].UpdatedAt = now
 		if err := store.SaveTasks(ts); err != nil {
 			return err
@@ -353,6 +359,12 @@ func runTask(store *storage.Store, args []string) error {
 		for i := range ts.Tasks {
 			if ts.Tasks[i].ID == id {
 				ts.Tasks[i].Done = value
+				if value {
+					ts.Tasks[i].TimerPhase = ""
+					ts.Tasks[i].TimerRemainingSec = 0
+					ts.Tasks[i].TimerSessionIndex = 0
+					ts.Tasks[i].TimerTotalSessions = 0
+				}
 				ts.Tasks[i].UpdatedAt = now
 				if err := store.SaveTasks(ts); err != nil {
 					return err

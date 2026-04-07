@@ -186,3 +186,59 @@ func TestKeyIsMatchesSpaceBinding(t *testing.T) {
 		t.Fatalf("keyIs should match space binding")
 	}
 }
+
+func TestSaveCurrentRunProgress(t *testing.T) {
+	m := newTestModel(t)
+	m.cursor = 0
+
+	_, _ = m.startSelectedCycle()
+	if m.run == nil {
+		t.Fatalf("run should be initialized")
+	}
+	m.run.remaining = 13*time.Minute + 12*time.Second
+	m.saveCurrentRunProgress()
+
+	reloaded, err := m.store.LoadTasks()
+	if err != nil {
+		t.Fatalf("LoadTasks() error = %v", err)
+	}
+	if got, want := reloaded.Tasks[0].TimerPhase, "focus"; got != want {
+		t.Fatalf("timer phase = %s, want %s", got, want)
+	}
+	if got, want := reloaded.Tasks[0].TimerRemainingSec, 13*60+12; got != want {
+		t.Fatalf("timer remaining sec = %d, want %d", got, want)
+	}
+}
+
+func TestStartSelectedCycleResumesFromSavedProgress(t *testing.T) {
+	m := newTestModel(t)
+	m.cursor = 0
+	m.tasks.Tasks[0].TimerPhase = "focus"
+	m.tasks.Tasks[0].TimerRemainingSec = 8*60 + 30
+	m.tasks.Tasks[0].TimerSessionIndex = 1
+	m.tasks.Tasks[0].TimerTotalSessions = 2
+
+	_, _ = m.startSelectedCycle()
+	if m.run == nil {
+		t.Fatalf("run should be initialized from saved progress")
+	}
+	if got, want := int(m.run.remaining/time.Second), 8*60+30; got != want {
+		t.Fatalf("remaining sec = %d, want %d", got, want)
+	}
+	if got, want := m.run.sessionIndex, 1; got != want {
+		t.Fatalf("session index = %d, want %d", got, want)
+	}
+	if got, want := m.run.totalSessions, 2; got != want {
+		t.Fatalf("total sessions = %d, want %d", got, want)
+	}
+}
+
+func TestTaskResumeLabel(t *testing.T) {
+	task := model.Task{TimerPhase: "focus", TimerRemainingSec: 510}
+	if got, want := taskResumeLabel(task), "resume 08:30 focus"; got != want {
+		t.Fatalf("taskResumeLabel() = %q, want %q", got, want)
+	}
+	if got := taskResumeLabel(model.Task{}); got != "" {
+		t.Fatalf("taskResumeLabel(empty) = %q, want empty", got)
+	}
+}
