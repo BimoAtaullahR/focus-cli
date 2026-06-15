@@ -751,76 +751,121 @@ func runPomodoro(store *storage.Store, args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	for i := 1; i <= *sessions; i++ {
-		fmt.Printf("\nFocus session %d/%d\n", i, *sessions)
-		warnTimer := scheduleWarningNotification(ctx, notifier, cfg.Notifications, *taskID, i, "focus", cfg.FocusMinutes)
-		s, e, done, runErr := pomodoro.Countdown(ctx, "FOCUS", cfg.FocusMinutes)
+	engine := pomodoro.NewSessionEngine(cfg.FocusMinutes, cfg.ShortBreakMinutes, cfg.LongBreakMinutes, cfg.LongBreakEvery, *sessions)
+
+	doneChan := make(chan error, 1)
+
+	var warnTimer *time.Timer
+
+	engine.OnPhaseStart = func(state pomodoro.EngineState) {
+		label := ""
+		minutes := 0
+		switch state.Phase {
+		case pomodoro.PhaseFocus:
+			label = "focus"
+			minutes = cfg.FocusMinutes
+			fmt.Printf("\nFocus session %d/%d\n", state.SessionCount, state.TotalSessions)
+		case pomodoro.PhaseShortBreak:
+			label = "short_break"
+			minutes = cfg.ShortBreakMinutes
+			fmt.Printf("\nSHORT BREAK\n")
+		case pomodoro.PhaseLongBreak:
+			label = "long_break"
+			minutes = cfg.LongBreakMinutes
+			fmt.Printf("\nLONG BREAK\n")
+		}
 		if warnTimer != nil {
 			warnTimer.Stop()
 		}
-		history = append(history, model.SessionHistory{StartedAt: s, EndedAt: e, TaskID: *taskID, Type: "focus", Completed: done})
-		if runErr != nil {
-			_ = store.SaveHistory(history)
-			return fmt.Errorf("interrupted")
-		}
-		_ = notifier.SendNotification(ctx, model.NotificationEvent{
-			Type:       model.NotificationFocusComplete,
-			Timestamp:  time.Now(),
-			SessionNum: i,
-			PhaseType:  "focus",
-			TaskID:     *taskID,
-			Message:    "Sesi fokus selesai. Saatnya istirahat.",
-		})
+		warnTimer = scheduleWarningNotification(ctx, notifier, cfg.Notifications, *taskID, state.SessionCount, label, minutes)
+	}
 
-		if *taskID > 0 {
-			for ti := range ts.Tasks {
-				if ts.Tasks[ti].ID == *taskID {
-					ts.Tasks[ti].CompletedPomodoros++
-					ts.Tasks[ti].UpdatedAt = time.Now()
-					if ts.Tasks[ti].TargetSessions > 0 && ts.Tasks[ti].CompletedPomodoros >= ts.Tasks[ti].TargetSessions {
-						ts.Tasks[ti].Done = true
-						_ = notifier.SendNotification(ctx, model.NotificationEvent{
-							Type:       model.NotificationTaskComplete,
-							Timestamp:  time.Now(),
-							SessionNum: i,
-							TaskID:     *taskID,
-							Message:    "Semua sesi task selesai.",
-						})
+	engine.OnTick = func(state pomodoro.EngineState) {
+		label := "FOCUS"
+		switch state.Phase {
+		case pomodoro.PhaseShortBreak:
+			label = "SHORT BREAK"
+		case pomodoro.PhaseLongBreak:
+			label = "LONG BREAK"
+		}
+		mins := int(state.Remaining / time.Minute)
+		secs := int((state.Remaining % time.Minute) / time.Second)
+		fmt.Printf("\r%s %02d:%02d", label, mins, secs)
+	}
+
+	engine.OnPhaseComplete = func(phase pomodoro.Phase, sessionCount int, startedAt, endedAt time.Time, completed bool) {
+		if warnTimer != nil {
+			warnTimer.Stop()
+		}
+
+		if phase == pomodoro.PhaseFocus {
+			if completed {
+				fmt.Print("\a\n") // Beep + Newline
+			} else {
+				fmt.Print("\n")
+			}
+			history = append(history, model.SessionHistory{StartedAt: startedAt, EndedAt: endedAt, TaskID: *taskID, Type: "focus", Completed: completed})
+			if completed {
+				_ = notifier.SendNotification(ctx, model.NotificationEvent{
+					Type:       model.NotificationFocusComplete,
+					Timestamp:  time.Now(),
+					SessionNum: sessionCount,
+					PhaseType:  "focus",
+					TaskID:     *taskID,
+					Message:    "Sesi fokus selesai. Saatnya istirahat.",
+				})
+
+				if *taskID > 0 {
+					for ti := range ts.Tasks {
+						if ts.Tasks[ti].ID == *taskID {
+							ts.Tasks[ti].CompletedPomodoros++
+							ts.Tasks[ti].UpdatedAt = time.Now()
+							if ts.Tasks[ti].TargetSessions > 0 && ts.Tasks[ti].CompletedPomodoros >= ts.Tasks[ti].TargetSessions {
+								ts.Tasks[ti].Done = true
+								_ = notifier.SendNotification(ctx, model.NotificationEvent{
+									Type:       model.NotificationTaskComplete,
+									Timestamp:  time.Now(),
+									SessionNum: sessionCount,
+									TaskID:     *taskID,
+									Message:    "Semua sesi task selesai.",
+								})
+							}
+						}
 					}
 				}
 			}
+		} else {
+			if completed {
+				fmt.Print("\a\n") // Beep + Newline
+			} else {
+				fmt.Print("\n")
+			}
+			history = append(history, model.SessionHistory{StartedAt: startedAt, EndedAt: endedAt, TaskID: *taskID, Type: string(phase), Completed: completed})
+			if completed {
+				_ = notifier.SendNotification(ctx, model.NotificationEvent{
+					Type:       model.NotificationBreakComplete,
+					Timestamp:  time.Now(),
+					SessionNum: sessionCount,
+					PhaseType:  string(phase),
+					TaskID:     *taskID,
+					Message:    "Waktu istirahat selesai. Kembali fokus.",
+				})
+			}
 		}
+	}
 
-		if i == *sessions {
-			break
-		}
+	engine.OnComplete = func() {
+		doneChan <- nil
+	}
 
-		breakMin := cfg.ShortBreakMinutes
-		label := "SHORT BREAK"
-		if i%cfg.LongBreakEvery == 0 {
-			breakMin = cfg.LongBreakMinutes
-			label = "LONG BREAK"
-		}
-		fmt.Printf("\n%s\n", label)
-		warnTimer = scheduleWarningNotification(ctx, notifier, cfg.Notifications, *taskID, i, strings.ToLower(strings.ReplaceAll(label, " ", "_")), breakMin)
-		s, e, done, runErr = pomodoro.Countdown(ctx, label, breakMin)
-		if warnTimer != nil {
-			warnTimer.Stop()
-		}
-		history = append(history, model.SessionHistory{StartedAt: s, EndedAt: e, TaskID: *taskID, Type: strings.ToLower(strings.ReplaceAll(label, " ", "_")), Completed: done})
-		if runErr != nil {
-			_ = store.SaveHistory(history)
-			_ = store.SaveTasks(ts)
-			return fmt.Errorf("interrupted")
-		}
-		_ = notifier.SendNotification(ctx, model.NotificationEvent{
-			Type:       model.NotificationBreakComplete,
-			Timestamp:  time.Now(),
-			SessionNum: i,
-			PhaseType:  strings.ToLower(strings.ReplaceAll(label, " ", "_")),
-			TaskID:     *taskID,
-			Message:    "Waktu istirahat selesai. Kembali fokus.",
-		})
+	engine.Start(ctx)
+
+	var runErr error
+	select {
+	case <-ctx.Done():
+		runErr = fmt.Errorf("interrupted")
+		time.Sleep(10 * time.Millisecond) // allow engine to trigger OnPhaseComplete
+	case <-doneChan:
 	}
 
 	if err := store.SaveHistory(history); err != nil {
@@ -829,6 +874,11 @@ func runPomodoro(store *storage.Store, args []string) error {
 	if err := store.SaveTasks(ts); err != nil {
 		return err
 	}
+
+	if runErr != nil {
+		return runErr
+	}
+
 	fmt.Println("\nPomodoro run finished")
 	return nil
 }
