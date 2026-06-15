@@ -14,6 +14,7 @@ import (
 
 	"focus-cli/internal/model"
 	"focus-cli/internal/notify"
+	"focus-cli/internal/pomodoro"
 	"focus-cli/internal/storage"
 )
 
@@ -83,6 +84,11 @@ type Model struct {
 	form     *formState
 	confirm  *confirmState
 	run      *runState
+	engine   *pomodoro.SessionEngine
+	engineCtx context.Context
+	engineCancel context.CancelFunc
+	engineChan chan tea.Msg
+
 	tickID   int
 	ready    bool
 	notifier *notify.Manager
@@ -209,8 +215,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.mode == modeRunning {
 			return m.updateRun(msg)
 		}
-	case runTickMsg:
-		return m.handleRunTick(msg)
+	case engineTickMsg:
+		return m.handleEngineTick(msg)
+	case enginePhaseStartMsg:
+		return m.handleEnginePhaseStart(msg)
+	case engineSessionWarnMsg:
+		return m.handleEngineSessionWarn(msg)
+	case enginePhaseCompleteMsg:
+		return m.handleEnginePhaseComplete(msg)
+	case engineCompleteMsg:
+		return m.handleEngineComplete()
 	}
 	return m, nil
 }
@@ -231,15 +245,142 @@ func (m *Model) View() string {
 	return m.viewDashboard()
 }
 
-type runTickMsg struct {
-	at    time.Time
-	token int
+type engineTickMsg pomodoro.EngineState
+type enginePhaseStartMsg pomodoro.EngineState
+type engineSessionWarnMsg pomodoro.EngineState
+type enginePhaseCompleteMsg struct {
+	Phase        pomodoro.Phase
+	SessionCount int
+	StartedAt    time.Time
+	EndedAt      time.Time
+	Completed    bool
+}
+type engineCompleteMsg struct{}
+
+func (m *Model) handleEngineTick(msg engineTickMsg) (tea.Model, tea.Cmd) {
+	if m.run == nil {
+		return m, nil
+	}
+	m.run.remaining = msg.Remaining
+	return m, waitForEngineMsg(m.engineChan)
 }
 
-func runTickCmd(token int) tea.Cmd {
-	return tea.Tick(time.Second, func(t time.Time) tea.Msg {
-		return runTickMsg{at: t, token: token}
+func (m *Model) handleEnginePhaseStart(msg enginePhaseStartMsg) (tea.Model, tea.Cmd) {
+	if m.run == nil {
+		return m, nil
+	}
+	if msg.Phase == pomodoro.PhaseFocus {
+		m.run.phase = runPhaseFocus
+		m.run.label = "FOCUS"
+	} else {
+		m.run.phase = runPhaseBreak
+		if msg.Phase == pomodoro.PhaseLongBreak {
+			m.run.label = "LONG BREAK"
+		} else {
+			m.run.label = "SHORT BREAK"
+		}
+	}
+	m.run.sessionIndex = msg.SessionCount
+	m.run.phaseDuration = msg.Remaining
+	m.run.remaining = msg.Remaining
+	m.run.startedAt = time.Now()
+	m.run.paused = false
+	m.run.notifiedWarning = false
+	
+	return m, waitForEngineMsg(m.engineChan)
+}
+
+func (m *Model) handleEngineSessionWarn(msg engineSessionWarnMsg) (tea.Model, tea.Cmd) {
+	if m.run == nil || m.config.Notifications == nil || !m.config.Notifications.Enabled {
+		return m, waitForEngineMsg(m.engineChan)
+	}
+	m.notifyAsync(model.NotificationEvent{
+		Type:       model.NotificationSessionWarn,
+		Timestamp:  time.Now(),
+		SessionNum: msg.SessionCount,
+		PhaseType:  string(msg.Phase),
+		TaskID:     m.run.taskID,
+		Message:    fmt.Sprintf("Sisa %s %d menit.", strings.ReplaceAll(string(msg.Phase), "_", " "), m.config.Notifications.WarningMinutesBefore),
 	})
+	return m, waitForEngineMsg(m.engineChan)
+}
+
+func (m *Model) handleEnginePhaseComplete(msg enginePhaseCompleteMsg) (tea.Model, tea.Cmd) {
+	if m.run == nil {
+		return m, nil
+	}
+	history := model.SessionHistory{
+		StartedAt: msg.StartedAt,
+		EndedAt:   msg.EndedAt,
+		TaskID:    m.run.taskID,
+		Type:      string(msg.Phase),
+		Completed: msg.Completed,
+	}
+	m.history = append(m.history, history)
+	_ = m.store.SaveHistory(m.history)
+
+	isTaskComplete := false
+	if msg.Phase == pomodoro.PhaseFocus && msg.Completed {
+		m.notifyAsync(model.NotificationEvent{
+			Type:       model.NotificationFocusComplete,
+			Timestamp:  time.Now(),
+			SessionNum: msg.SessionCount,
+			PhaseType:  "focus",
+			TaskID:     m.run.taskID,
+			Message:    "Sesi fokus selesai. Saatnya istirahat.",
+		})
+		
+		if m.run.taskID > 0 {
+			for i := range m.tasks.Tasks {
+				if m.tasks.Tasks[i].ID == m.run.taskID {
+					m.tasks.Tasks[i].CompletedPomodoros++
+					if m.tasks.Tasks[i].TargetSessions > 0 && m.tasks.Tasks[i].CompletedPomodoros >= m.tasks.Tasks[i].TargetSessions {
+						m.tasks.Tasks[i].Done = true
+						m.tasks.Tasks[i].TimerPhase = ""
+						m.tasks.Tasks[i].TimerRemainingSec = 0
+						m.tasks.Tasks[i].TimerSessionIndex = 0
+						m.tasks.Tasks[i].TimerTotalSessions = 0
+						isTaskComplete = true
+					}
+					m.tasks.Tasks[i].UpdatedAt = time.Now()
+					break
+				}
+			}
+			_ = m.store.SaveTasks(m.tasks)
+		}
+	} else if msg.Phase != pomodoro.PhaseFocus && msg.Completed {
+		m.notifyAsync(model.NotificationEvent{
+			Type:       model.NotificationBreakComplete,
+			Timestamp:  time.Now(),
+			SessionNum: msg.SessionCount,
+			PhaseType:  string(msg.Phase),
+			TaskID:     m.run.taskID,
+			Message:    "Waktu istirahat selesai. Kembali fokus.",
+		})
+	}
+	
+	if isTaskComplete {
+		m.notifyAsync(model.NotificationEvent{
+			Type:       model.NotificationTaskComplete,
+			Timestamp:  time.Now(),
+			SessionNum: msg.SessionCount,
+			TaskID:     m.run.taskID,
+			Message:    "Semua sesi task selesai.",
+		})
+	}
+
+	return m, waitForEngineMsg(m.engineChan)
+}
+
+func (m *Model) handleEngineComplete() (tea.Model, tea.Cmd) {
+	if m.run != nil {
+		m.clearTaskTimerProgress(m.run.taskID)
+		m.status = "Keren! Semua sesi pada cycle ini sudah tuntas."
+	}
+	m.run = nil
+	m.mode = modeDashboard
+	m.tickID++
+	return m.reload()
 }
 
 func (m *Model) notifyAsync(event model.NotificationEvent) {
@@ -253,15 +394,64 @@ func (m *Model) notifyAsync(event model.NotificationEvent) {
 	}()
 }
 
+func waitForEngineMsg(c chan tea.Msg) tea.Cmd {
+	return func() tea.Msg {
+		msg, ok := <-c
+		if !ok {
+			return nil
+		}
+		return msg
+	}
+}
+
 func (m *Model) beginFocusCycle(taskID, totalSessions int) (tea.Model, tea.Cmd) {
 	if totalSessions < 1 {
 		totalSessions = 1
 	}
+
+	engineCfg := pomodoro.EngineConfig{
+		FocusDuration:      time.Duration(m.config.FocusMinutes) * time.Minute,
+		ShortBreakDuration: time.Duration(m.config.ShortBreakMinutes) * time.Minute,
+		LongBreakDuration:  time.Duration(m.config.LongBreakMinutes) * time.Minute,
+		LongBreakEvery:     m.config.LongBreakEvery,
+		TargetSessions:     totalSessions,
+		TickInterval:       time.Second,
+	}
+	if m.config.Notifications != nil && m.config.Notifications.Enabled {
+		engineCfg.WarningDuration = time.Duration(m.config.Notifications.WarningMinutesBefore) * time.Minute
+	}
+
+	m.engine = pomodoro.NewSessionEngine(engineCfg)
+	m.engineCtx, m.engineCancel = context.WithCancel(context.Background())
+	m.engineChan = make(chan tea.Msg, 100)
+
+	m.engine.OnTick = func(state pomodoro.EngineState) {
+		m.engineChan <- engineTickMsg(state)
+	}
+	m.engine.OnPhaseStart = func(state pomodoro.EngineState) {
+		m.engineChan <- enginePhaseStartMsg(state)
+	}
+	m.engine.OnPhaseComplete = func(phase pomodoro.Phase, sessionCount int, startedAt, endedAt time.Time, completed bool) {
+		m.engineChan <- enginePhaseCompleteMsg{
+			Phase:        phase,
+			SessionCount: sessionCount,
+			StartedAt:    startedAt,
+			EndedAt:      endedAt,
+			Completed:    completed,
+		}
+	}
+	m.engine.OnSessionWarn = func(state pomodoro.EngineState) {
+		m.engineChan <- engineSessionWarnMsg(state)
+	}
+	m.engine.OnComplete = func() {
+		m.engineChan <- engineCompleteMsg{}
+	}
+
 	m.run = &runState{
 		phase:           runPhaseFocus,
 		label:           "FOCUS",
-		remaining:       time.Duration(m.config.FocusMinutes) * time.Minute,
-		phaseDuration:   time.Duration(m.config.FocusMinutes) * time.Minute,
+		remaining:       engineCfg.FocusDuration,
+		phaseDuration:   engineCfg.FocusDuration,
 		startedAt:       time.Now(),
 		taskID:          taskID,
 		sessionIndex:    1,
@@ -269,10 +459,13 @@ func (m *Model) beginFocusCycle(taskID, totalSessions int) (tea.Model, tea.Cmd) 
 		paused:          false,
 		notifiedWarning: false,
 	}
+	
 	m.mode = modeRunning
 	m.status = fmt.Sprintf("Semangat! Fokus sesi 1/%d dimulai.", totalSessions)
-	m.tickID++
-	return m, runTickCmd(m.tickID)
+	
+	go m.engine.Start(m.engineCtx)
+
+	return m, waitForEngineMsg(m.engineChan)
 }
 
 func (m *Model) beginBreakPhase(breakType string) (tea.Model, tea.Cmd) {
@@ -299,129 +492,10 @@ func (m *Model) beginBreakPhase(breakType string) (tea.Model, tea.Cmd) {
 		m.status = "Nice! Saatnya short break sebentar."
 	}
 	m.tickID++
-	return m, runTickCmd(m.tickID)
+	return m, nil
 }
 
-func (m *Model) finishFocusSession(manual bool) (tea.Model, tea.Cmd) {
-	if m.run == nil {
-		return m, nil
-	}
-	achievementMsg := ""
-	history := model.SessionHistory{
-		StartedAt: m.run.startedAt,
-		EndedAt:   time.Now(),
-		TaskID:    m.run.taskID,
-		Type:      "focus",
-		Completed: true,
-	}
-	m.history = append(m.history, history)
-	_ = m.store.SaveHistory(m.history)
-	m.notifyAsync(model.NotificationEvent{
-		Type:       model.NotificationFocusComplete,
-		Timestamp:  time.Now(),
-		SessionNum: m.run.sessionIndex,
-		PhaseType:  "focus",
-		TaskID:     m.run.taskID,
-		Message:    "Sesi fokus selesai. Saatnya istirahat.",
-	})
-	isTaskComplete := false
-	if m.run.taskID > 0 {
-		for i := range m.tasks.Tasks {
-			if m.tasks.Tasks[i].ID == m.run.taskID {
-				m.tasks.Tasks[i].CompletedPomodoros++
-				if m.tasks.Tasks[i].TargetSessions > 0 && m.tasks.Tasks[i].CompletedPomodoros >= m.tasks.Tasks[i].TargetSessions {
-					m.tasks.Tasks[i].Done = true
-					m.tasks.Tasks[i].TimerPhase = ""
-					m.tasks.Tasks[i].TimerRemainingSec = 0
-					m.tasks.Tasks[i].TimerSessionIndex = 0
-					m.tasks.Tasks[i].TimerTotalSessions = 0
-					isTaskComplete = true
-					achievementMsg = fmt.Sprintf("Luar biasa! Task '%s' selesai 100%%. Kerja bagus!", m.tasks.Tasks[i].Title)
-				}
-				m.tasks.Tasks[i].UpdatedAt = time.Now()
-				break
-			}
-		}
-		_ = m.store.SaveTasks(m.tasks)
-	}
-	if isTaskComplete {
-		m.notifyAsync(model.NotificationEvent{
-			Type:       model.NotificationTaskComplete,
-			Timestamp:  time.Now(),
-			SessionNum: m.run.sessionIndex,
-			TaskID:     m.run.taskID,
-			Message:    "Semua sesi task selesai.",
-		})
-	}
-	if m.run.sessionIndex >= m.run.totalSessions {
-		m.clearTaskTimerProgress(m.run.taskID)
-		m.status = "Mantap! Satu cycle pomodoro berhasil kamu selesaikan."
-		if achievementMsg != "" {
-			m.status = achievementMsg
-		}
-		m.run = nil
-		m.mode = modeDashboard
-		m.tickID++
-		return m.reload()
-	}
-	breakType := "short"
-	if m.run.sessionIndex%m.config.LongBreakEvery == 0 {
-		breakType = "long"
-	}
-	if manual {
-		m.status = "Bagus! Sesi fokus selesai, lanjut break ya."
-		if achievementMsg != "" {
-			m.status = achievementMsg
-		}
-	}
-	return m.beginBreakPhase(breakType)
-}
-
-func (m *Model) finishBreakSession(skip bool) (tea.Model, tea.Cmd) {
-	if m.run == nil {
-		return m, nil
-	}
-	history := model.SessionHistory{
-		StartedAt: m.run.startedAt,
-		EndedAt:   time.Now(),
-		TaskID:    m.run.taskID,
-		Type:      strings.ToLower(strings.ReplaceAll(m.run.label, " ", "_")),
-		Completed: true,
-	}
-	m.history = append(m.history, history)
-	_ = m.store.SaveHistory(m.history)
-	m.notifyAsync(model.NotificationEvent{
-		Type:       model.NotificationBreakComplete,
-		Timestamp:  time.Now(),
-		SessionNum: m.run.sessionIndex,
-		PhaseType:  strings.ToLower(strings.ReplaceAll(m.run.label, " ", "_")),
-		TaskID:     m.run.taskID,
-		Message:    "Waktu istirahat selesai. Kembali fokus.",
-	})
-	if m.run.sessionIndex < m.run.totalSessions {
-		m.run.sessionIndex++
-		if skip {
-			m.status = "Oke, break dilewati. Lanjut fokus berikutnya!"
-		} else {
-			m.status = fmt.Sprintf("Siap! Fokus sesi %d/%d dimulai.", m.run.sessionIndex, m.run.totalSessions)
-		}
-		m.run.phase = runPhaseFocus
-		m.run.label = "FOCUS"
-		m.run.remaining = time.Duration(m.config.FocusMinutes) * time.Minute
-		m.run.phaseDuration = time.Duration(m.config.FocusMinutes) * time.Minute
-		m.run.startedAt = time.Now()
-		m.run.paused = false
-		m.run.notifiedWarning = false
-		m.tickID++
-		return m, runTickCmd(m.tickID)
-	}
-	m.status = "Keren! Semua sesi pada cycle ini sudah tuntas."
-	m.clearTaskTimerProgress(m.run.taskID)
-	m.run = nil
-	m.mode = modeDashboard
-	m.tickID++
-	return m.reload()
-}
+// Removed finishFocusSession and finishBreakSession
 
 func (m *Model) updateDashboard(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
@@ -538,58 +612,26 @@ func (m *Model) updateRun(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case keyIs(msg, m.config.Keys.Pause, "space"):
 		m.run.paused = !m.run.paused
 		if m.run.paused {
+			m.engine.Pause()
 			m.status = "Timer dijeda. Tarik napas, lanjut saat siap."
 		} else {
+			go m.engine.Start(m.engineCtx)
 			m.status = "Lanjut lagi. Fokusmu mantap!"
 		}
 		return m, nil
 	case keyIs(msg, m.config.Keys.EndPhase):
-		if m.run.phase == runPhaseFocus {
-			return m.finishFocusSession(true)
-		}
-		return m.finishBreakSession(true)
+		m.engine.AdvancePhase()
+		return m, nil
 	case keyIs(msg, m.config.Keys.NextPhase):
 		if m.run.phase == runPhaseBreak {
-			return m.finishBreakSession(true)
+			m.engine.AdvancePhase()
 		}
+		return m, nil
 	}
 	return m, nil
 }
 
-func (m *Model) handleRunTick(msg runTickMsg) (tea.Model, tea.Cmd) {
-	if msg.token != m.tickID {
-		return m, nil
-	}
-	if m.run == nil {
-		m.mode = modeDashboard
-		return m, nil
-	}
-	if m.run.paused {
-		return m, runTickCmd(m.tickID)
-	}
-	m.run.remaining -= time.Second
-	if m.run.phase == runPhaseFocus && !m.run.notifiedWarning && m.config.Notifications != nil {
-		warnAt := time.Duration(m.config.Notifications.WarningMinutesBefore) * time.Minute
-		if warnAt > 0 && m.run.remaining > 0 && m.run.remaining <= warnAt {
-			m.run.notifiedWarning = true
-			m.notifyAsync(model.NotificationEvent{
-				Type:       model.NotificationSessionWarn,
-				Timestamp:  time.Now(),
-				SessionNum: m.run.sessionIndex,
-				PhaseType:  "focus",
-				TaskID:     m.run.taskID,
-				Message:    fmt.Sprintf("Sisa fokus %d menit.", m.config.Notifications.WarningMinutesBefore),
-			})
-		}
-	}
-	if m.run.remaining <= 0 {
-		if m.run.phase == runPhaseFocus {
-			return m.finishFocusSession(false)
-		}
-		return m.finishBreakSession(false)
-	}
-	return m, runTickCmd(m.tickID)
-}
+// Removed runTickMsg and runTickCmd
 
 func (m *Model) ViewDashboard() string { return m.viewDashboard() }
 
@@ -1016,7 +1058,7 @@ func (m *Model) startSelectedCycle() (tea.Model, tea.Cmd) {
 			m.mode = modeRunning
 			m.status = fmt.Sprintf("Melanjutkan timer '%s' dari %02d:%02d.", task.Title, task.TimerRemainingSec/60, task.TimerRemainingSec%60)
 			m.tickID++
-			return m, runTickCmd(m.tickID)
+			return m, nil
 		}
 		remaining := task.TargetSessions - task.CompletedPomodoros
 		if remaining > 0 {

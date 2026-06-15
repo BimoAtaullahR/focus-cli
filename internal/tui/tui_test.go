@@ -1,12 +1,14 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"focus-cli/internal/model"
+	"focus-cli/internal/pomodoro"
 	"focus-cli/internal/storage"
 )
 
@@ -78,61 +80,7 @@ func TestMoveTaskPersistsOrder(t *testing.T) {
 	}
 }
 
-func TestPomodoroCycleFlow(t *testing.T) {
-	m := newTestModel(t)
-	m.cursor = 0
 
-	if _, _ = m.startSelectedCycle(); m.run == nil {
-		t.Fatalf("run should be initialized")
-	}
-	if got, want := m.run.phase, runPhaseFocus; got != want {
-		t.Fatalf("phase = %v, want %v", got, want)
-	}
-	if got, want := m.run.totalSessions, 2; got != want {
-		t.Fatalf("totalSessions = %d, want %d", got, want)
-	}
-
-	if _, _ = m.finishFocusSession(false); m.run == nil {
-		t.Fatalf("run should continue into break")
-	}
-	if got, want := m.run.phase, runPhaseBreak; got != want {
-		t.Fatalf("phase after focus = %v, want %v", got, want)
-	}
-
-	if _, _ = m.finishBreakSession(false); m.run == nil {
-		t.Fatalf("run should continue into next focus")
-	}
-	if got, want := m.run.phase, runPhaseFocus; got != want {
-		t.Fatalf("phase after break = %v, want %v", got, want)
-	}
-	if got, want := m.run.sessionIndex, 2; got != want {
-		t.Fatalf("sessionIndex = %d, want %d", got, want)
-	}
-
-	_, _ = m.finishFocusSession(false)
-	if m.run != nil {
-		t.Fatalf("run should end after final focus session")
-	}
-
-	if got, want := m.tasks.Tasks[0].CompletedPomodoros, 2; got != want {
-		t.Fatalf("completed pomodoros = %d, want %d", got, want)
-	}
-	if got, want := m.tasks.Tasks[0].Done, true; got != want {
-		t.Fatalf("task done = %v, want %v", got, want)
-	}
-	if got, want := len(m.history), 3; got != want {
-		t.Fatalf("history length = %d, want %d", got, want)
-	}
-	if got, want := m.history[0].Type, "focus"; got != want {
-		t.Fatalf("history[0].Type = %s, want %s", got, want)
-	}
-	if got, want := m.history[1].Type, "short_break"; got != want {
-		t.Fatalf("history[1].Type = %s, want %s", got, want)
-	}
-	if got, want := m.history[2].Type, "focus"; got != want {
-		t.Fatalf("history[2].Type = %s, want %s", got, want)
-	}
-}
 
 func TestStartCycleBlockedForDoneTask(t *testing.T) {
 	m := newTestModel(t)
@@ -185,6 +133,92 @@ func TestKeyIsMatchesSpaceBinding(t *testing.T) {
 	if !keyIs(msg, "space") {
 		t.Fatalf("keyIs should match space binding")
 	}
+}
+
+func TestTUI_EngineTickUpdatesView(t *testing.T) {
+	cfg := model.DefaultConfig()
+	cfg.Keys = model.DefaultKeys()
+	m := &Model{
+		config: cfg,
+		run: &runState{
+			phase:         runPhaseFocus,
+			label:         "FOCUS",
+			remaining:     60 * time.Second,
+			phaseDuration: 60 * time.Second,
+			taskID:        1,
+			sessionIndex:  1,
+			totalSessions: 1,
+		},
+		mode:  modeRunning,
+		ready: true,
+	}
+
+	// We'll define engineTickMsg as pomodoro.EngineState internally.
+	// But let's create it.
+	state := pomodoro.EngineState{
+		Phase:         pomodoro.PhaseFocus,
+		Remaining:     59 * time.Second,
+		SessionCount:  1,
+		TotalSessions: 1,
+		IsRunning:     true,
+	}
+	msg := engineTickMsg(state)
+	
+	newModel, _ := m.Update(msg)
+	
+	viewStr := newModel.View()
+	
+	if !strings.Contains(viewStr, "00:59") {
+		t.Errorf("expected view to contain 00:59, got:\n%s", viewStr)
+	}
+}
+
+func TestTUI_EnginePhaseCompleteUpdatesTaskProgress(t *testing.T) {
+	m := newTestModel(t)
+	m.run = &runState{
+		taskID: 1, // Task A
+	}
+
+	msg := enginePhaseCompleteMsg{
+		Phase:        pomodoro.PhaseFocus,
+		SessionCount: 1,
+		StartedAt:    time.Now().Add(-25 * time.Minute),
+		EndedAt:      time.Now(),
+		Completed:    true,
+	}
+
+	_, _ = m.Update(msg)
+
+	// Verify task progress is updated
+	if m.tasks.Tasks[0].CompletedPomodoros != 1 {
+		t.Errorf("expected CompletedPomodoros=1, got %d", m.tasks.Tasks[0].CompletedPomodoros)
+	}
+	// Verify history is saved
+	if len(m.history) != 1 {
+		t.Errorf("expected history length=1, got %d", len(m.history))
+	}
+	// Verify it was saved to storage
+	reloaded, _ := m.store.LoadTasks()
+	if reloaded.Tasks[0].CompletedPomodoros != 1 {
+		t.Errorf("expected persisted CompletedPomodoros=1, got %d", reloaded.Tasks[0].CompletedPomodoros)
+	}
+}
+
+func TestTUI_BeginFocusCycleStartsEngine(t *testing.T) {
+	m := newTestModel(t)
+	m.cursor = 0
+
+	_, cmd := m.beginFocusCycle(1, 2)
+	if m.engine == nil {
+		t.Fatal("engine should be initialized")
+	}
+	if m.engineChan == nil {
+		t.Fatal("engineChan should be initialized")
+	}
+	if cmd == nil {
+		t.Fatal("expected waitForEngineMsg cmd to be returned")
+	}
+	m.engineCancel() // cleanup
 }
 
 func TestSaveCurrentRunProgress(t *testing.T) {

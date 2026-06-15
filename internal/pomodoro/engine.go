@@ -147,6 +147,12 @@ func (e *SessionEngine) Stop() {
 	}
 }
 
+// AdvancePhase manually completes the current phase.
+// It sets remaining to 0 which will be picked up by the tick loop to transition to next phase.
+func (e *SessionEngine) AdvancePhase() {
+	e.state.Remaining = 0
+}
+
 func (e *SessionEngine) nextPhase() {
 	e.warnTriggered = false
 	if e.state.Phase == PhaseFocus {
