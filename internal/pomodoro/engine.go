@@ -62,6 +62,12 @@ func NewSessionEngine(config EngineConfig) *SessionEngine {
 	}
 }
 
+func (e *SessionEngine) Resume(phase Phase, sessionCount int, remaining time.Duration) {
+	e.state.Phase = phase
+	e.state.SessionCount = sessionCount
+	e.state.Remaining = remaining
+}
+
 func (e *SessionEngine) Start(ctx context.Context) {
 	if e.state.IsRunning {
 		return

@@ -256,6 +256,9 @@ func TestStartSelectedCycleResumesFromSavedProgress(t *testing.T) {
 	if m.run == nil {
 		t.Fatalf("run should be initialized from saved progress")
 	}
+	if m.engine == nil {
+		t.Fatalf("engine should be initialized when resuming from saved progress")
+	}
 	if got, want := int(m.run.remaining/time.Second), 8*60+30; got != want {
 		t.Fatalf("remaining sec = %d, want %d", got, want)
 	}
@@ -264,6 +267,37 @@ func TestStartSelectedCycleResumesFromSavedProgress(t *testing.T) {
 	}
 	if got, want := m.run.totalSessions, 2; got != want {
 		t.Fatalf("total sessions = %d, want %d", got, want)
+	}
+}
+
+func TestResumedCycleCanBePausedAndResumed(t *testing.T) {
+	m := newTestModel(t)
+	m.cursor = 0
+	m.tasks.Tasks[0].TimerPhase = "focus"
+	m.tasks.Tasks[0].TimerRemainingSec = 8*60 + 30
+	m.tasks.Tasks[0].TimerSessionIndex = 1
+	m.tasks.Tasks[0].TimerTotalSessions = 2
+
+	_, _ = m.startSelectedCycle()
+	if m.run == nil {
+		t.Fatalf("run should be initialized")
+	}
+
+	// Default pause key is "p".
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}}
+	model, _ := m.Update(msg)
+	updatedModel := model.(*Model)
+
+	if !updatedModel.run.paused {
+		t.Fatalf("expected cycle to be paused")
+	}
+
+	// Press pause key again to resume
+	model, _ = updatedModel.Update(msg)
+	updatedModel = model.(*Model)
+
+	if updatedModel.run.paused {
+		t.Fatalf("expected cycle to be resumed")
 	}
 }
 

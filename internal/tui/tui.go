@@ -612,19 +612,27 @@ func (m *Model) updateRun(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case keyIs(msg, m.config.Keys.Pause, "space"):
 		m.run.paused = !m.run.paused
 		if m.run.paused {
-			m.engine.Pause()
+			if m.engine != nil {
+				m.engine.Pause()
+			}
 			m.status = "Timer dijeda. Tarik napas, lanjut saat siap."
 		} else {
-			go m.engine.Start(m.engineCtx)
+			if m.engine != nil {
+				go m.engine.Start(m.engineCtx)
+			}
 			m.status = "Lanjut lagi. Fokusmu mantap!"
 		}
 		return m, nil
 	case keyIs(msg, m.config.Keys.EndPhase):
-		m.engine.AdvancePhase()
+		if m.engine != nil {
+			m.engine.AdvancePhase()
+		}
 		return m, nil
 	case keyIs(msg, m.config.Keys.NextPhase):
 		if m.run.phase == runPhaseBreak {
-			m.engine.AdvancePhase()
+			if m.engine != nil {
+				m.engine.AdvancePhase()
+			}
 		}
 		return m, nil
 	}
@@ -1043,6 +1051,56 @@ func (m *Model) startSelectedCycle() (tea.Model, tea.Cmd) {
 			if total < 1 {
 				total = 1
 			}
+
+			var pPhase pomodoro.Phase
+			switch task.TimerPhase {
+			case "short_break":
+				pPhase = pomodoro.PhaseShortBreak
+			case "long_break":
+				pPhase = pomodoro.PhaseLongBreak
+			default:
+				pPhase = pomodoro.PhaseFocus
+			}
+
+			engineCfg := pomodoro.EngineConfig{
+				FocusDuration:      time.Duration(m.config.FocusMinutes) * time.Minute,
+				ShortBreakDuration: time.Duration(m.config.ShortBreakMinutes) * time.Minute,
+				LongBreakDuration:  time.Duration(m.config.LongBreakMinutes) * time.Minute,
+				LongBreakEvery:     m.config.LongBreakEvery,
+				TargetSessions:     total,
+				TickInterval:       time.Second,
+			}
+			if m.config.Notifications != nil && m.config.Notifications.Enabled {
+				engineCfg.WarningDuration = time.Duration(m.config.Notifications.WarningMinutesBefore) * time.Minute
+			}
+
+			m.engine = pomodoro.NewSessionEngine(engineCfg)
+			m.engine.Resume(pPhase, sessionIndex, time.Duration(task.TimerRemainingSec)*time.Second)
+			m.engineCtx, m.engineCancel = context.WithCancel(context.Background())
+			m.engineChan = make(chan tea.Msg, 100)
+
+			m.engine.OnTick = func(state pomodoro.EngineState) {
+				m.engineChan <- engineTickMsg(state)
+			}
+			m.engine.OnPhaseStart = func(state pomodoro.EngineState) {
+				m.engineChan <- enginePhaseStartMsg(state)
+			}
+			m.engine.OnPhaseComplete = func(phase pomodoro.Phase, sessionCount int, startedAt, endedAt time.Time, completed bool) {
+				m.engineChan <- enginePhaseCompleteMsg{
+					Phase:        phase,
+					SessionCount: sessionCount,
+					StartedAt:    startedAt,
+					EndedAt:      endedAt,
+					Completed:    completed,
+				}
+			}
+			m.engine.OnSessionWarn = func(state pomodoro.EngineState) {
+				m.engineChan <- engineSessionWarnMsg(state)
+			}
+			m.engine.OnComplete = func() {
+				m.engineChan <- engineCompleteMsg{}
+			}
+
 			m.run = &runState{
 				phase:           phase,
 				label:           label,
@@ -1058,7 +1116,10 @@ func (m *Model) startSelectedCycle() (tea.Model, tea.Cmd) {
 			m.mode = modeRunning
 			m.status = fmt.Sprintf("Melanjutkan timer '%s' dari %02d:%02d.", task.Title, task.TimerRemainingSec/60, task.TimerRemainingSec%60)
 			m.tickID++
-			return m, nil
+
+			go m.engine.Start(m.engineCtx)
+
+			return m, waitForEngineMsg(m.engineChan)
 		}
 		remaining := task.TargetSessions - task.CompletedPomodoros
 		if remaining > 0 {
