@@ -751,33 +751,44 @@ func runPomodoro(store *storage.Store, args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	engine := pomodoro.NewSessionEngine(cfg.FocusMinutes, cfg.ShortBreakMinutes, cfg.LongBreakMinutes, cfg.LongBreakEvery, *sessions)
+	engineCfg := pomodoro.EngineConfig{
+		FocusDuration:      time.Duration(cfg.FocusMinutes) * time.Minute,
+		ShortBreakDuration: time.Duration(cfg.ShortBreakMinutes) * time.Minute,
+		LongBreakDuration:  time.Duration(cfg.LongBreakMinutes) * time.Minute,
+		LongBreakEvery:     cfg.LongBreakEvery,
+		TargetSessions:     *sessions,
+		WarningDuration:    time.Duration(cfg.Notifications.WarningMinutesBefore) * time.Minute,
+		TickInterval:       time.Second,
+	}
 
+	engine := pomodoro.NewSessionEngine(engineCfg)
+	
 	doneChan := make(chan error, 1)
 
-	var warnTimer *time.Timer
-
 	engine.OnPhaseStart = func(state pomodoro.EngineState) {
-		label := ""
-		minutes := 0
 		switch state.Phase {
 		case pomodoro.PhaseFocus:
-			label = "focus"
-			minutes = cfg.FocusMinutes
 			fmt.Printf("\nFocus session %d/%d\n", state.SessionCount, state.TotalSessions)
 		case pomodoro.PhaseShortBreak:
-			label = "short_break"
-			minutes = cfg.ShortBreakMinutes
 			fmt.Printf("\nSHORT BREAK\n")
 		case pomodoro.PhaseLongBreak:
-			label = "long_break"
-			minutes = cfg.LongBreakMinutes
 			fmt.Printf("\nLONG BREAK\n")
 		}
-		if warnTimer != nil {
-			warnTimer.Stop()
+	}
+
+	engine.OnSessionWarn = func(state pomodoro.EngineState) {
+		if cfg.Notifications == nil || !cfg.Notifications.Enabled || cfg.Notifications.WarningMinutesBefore <= 0 {
+			return
 		}
-		warnTimer = scheduleWarningNotification(ctx, notifier, cfg.Notifications, *taskID, state.SessionCount, label, minutes)
+		phaseType := string(state.Phase)
+		_ = notifier.SendNotification(ctx, model.NotificationEvent{
+			Type:       model.NotificationSessionWarn,
+			Timestamp:  time.Now(),
+			SessionNum: state.SessionCount,
+			PhaseType:  phaseType,
+			TaskID:     *taskID,
+			Message:    fmt.Sprintf("Sisa %s %d menit.", strings.ReplaceAll(phaseType, "_", " "), cfg.Notifications.WarningMinutesBefore),
+		})
 	}
 
 	engine.OnTick = func(state pomodoro.EngineState) {
@@ -794,10 +805,6 @@ func runPomodoro(store *storage.Store, args []string) error {
 	}
 
 	engine.OnPhaseComplete = func(phase pomodoro.Phase, sessionCount int, startedAt, endedAt time.Time, completed bool) {
-		if warnTimer != nil {
-			warnTimer.Stop()
-		}
-
 		if phase == pomodoro.PhaseFocus {
 			if completed {
 				fmt.Print("\a\n") // Beep + Newline
@@ -904,26 +911,7 @@ func runSingleTimer(args []string) error {
 	return nil
 }
 
-func scheduleWarningNotification(ctx context.Context, notifier *notify.Manager, cfg *model.NotificationConfig, taskID, sessionNum int, phaseType string, phaseMinutes int) *time.Timer {
-	if notifier == nil || cfg == nil || !cfg.Enabled || cfg.WarningMinutesBefore <= 0 {
-		return nil
-	}
-	warnAfter := time.Duration(phaseMinutes-cfg.WarningMinutesBefore) * time.Minute
-	if warnAfter <= 0 {
-		return nil
-	}
-	warnMin := cfg.WarningMinutesBefore
-	return time.AfterFunc(warnAfter, func() {
-		_ = notifier.SendNotification(ctx, model.NotificationEvent{
-			Type:       model.NotificationSessionWarn,
-			Timestamp:  time.Now(),
-			SessionNum: sessionNum,
-			PhaseType:  phaseType,
-			TaskID:     taskID,
-			Message:    fmt.Sprintf("Sisa %s %d menit.", strings.ReplaceAll(phaseType, "_", " "), warnMin),
-		})
-	})
-}
+
 
 func runStats(store *storage.Store) error {
 	ts, err := store.LoadTasks()

@@ -21,35 +21,42 @@ type EngineState struct {
 	IsRunning     bool
 }
 
+type EngineConfig struct {
+	FocusDuration      time.Duration
+	ShortBreakDuration time.Duration
+	LongBreakDuration  time.Duration
+	LongBreakEvery     int
+	TargetSessions     int
+	WarningDuration    time.Duration
+	TickInterval       time.Duration
+}
+
 type SessionEngine struct {
-	FocusMinutes      int
-	ShortBreakMinutes int
-	LongBreakMinutes  int
-	LongBreakEvery    int
-	TargetSessions    int
+	config EngineConfig
 
 	OnTick          func(state EngineState)
 	OnPhaseStart    func(state EngineState)
 	OnPhaseComplete func(phase Phase, sessionCount int, startedAt, endedAt time.Time, completed bool)
+	OnSessionWarn   func(state EngineState)
 	OnComplete      func()
 
 	state          EngineState
 	cancel         context.CancelFunc
 	phaseStartedAt time.Time
+	warnTriggered  bool
 }
 
-func NewSessionEngine(focus, short, long, longEvery, targetSessions int) *SessionEngine {
+func NewSessionEngine(config EngineConfig) *SessionEngine {
+	if config.TickInterval <= 0 {
+		config.TickInterval = time.Second
+	}
 	return &SessionEngine{
-		FocusMinutes:      focus,
-		ShortBreakMinutes: short,
-		LongBreakMinutes:  long,
-		LongBreakEvery:    longEvery,
-		TargetSessions:    targetSessions,
+		config: config,
 		state: EngineState{
 			Phase:         PhaseFocus,
 			SessionCount:  1,
-			TotalSessions: targetSessions,
-			Remaining:     time.Duration(focus) * time.Minute,
+			TotalSessions: config.TargetSessions,
+			Remaining:     config.FocusDuration,
 			IsRunning:     false,
 		},
 	}
@@ -74,7 +81,7 @@ func (e *SessionEngine) Start(ctx context.Context) {
 	}
 
 	go func() {
-		ticker := time.NewTicker(1 * time.Second)
+		ticker := time.NewTicker(e.config.TickInterval)
 		defer ticker.Stop()
 
 		for {
@@ -86,7 +93,15 @@ func (e *SessionEngine) Start(ctx context.Context) {
 				}
 				return
 			case <-ticker.C:
-				e.state.Remaining -= time.Second
+				e.state.Remaining -= e.config.TickInterval
+				
+				if !e.warnTriggered && e.config.WarningDuration > 0 && e.state.Remaining <= e.config.WarningDuration {
+					e.warnTriggered = true
+					if e.OnSessionWarn != nil {
+						e.OnSessionWarn(e.state)
+					}
+				}
+
 				if e.state.Remaining <= 0 {
 					e.state.Remaining = 0
 					if e.OnTick != nil {
@@ -133,8 +148,9 @@ func (e *SessionEngine) Stop() {
 }
 
 func (e *SessionEngine) nextPhase() {
+	e.warnTriggered = false
 	if e.state.Phase == PhaseFocus {
-		if e.state.SessionCount >= e.TargetSessions {
+		if e.state.SessionCount >= e.config.TargetSessions {
 			e.state.IsRunning = false
 			if e.cancel != nil {
 				e.cancel()
@@ -146,18 +162,18 @@ func (e *SessionEngine) nextPhase() {
 			return
 		}
 
-		if e.state.SessionCount%e.LongBreakEvery == 0 {
+		if e.state.SessionCount%e.config.LongBreakEvery == 0 {
 			e.state.Phase = PhaseLongBreak
-			e.state.Remaining = time.Duration(e.LongBreakMinutes) * time.Minute
+			e.state.Remaining = e.config.LongBreakDuration
 		} else {
 			e.state.Phase = PhaseShortBreak
-			e.state.Remaining = time.Duration(e.ShortBreakMinutes) * time.Minute
+			e.state.Remaining = e.config.ShortBreakDuration
 		}
 	} else {
 		// From break to focus
 		e.state.SessionCount++
 		e.state.Phase = PhaseFocus
-		e.state.Remaining = time.Duration(e.FocusMinutes) * time.Minute
+		e.state.Remaining = e.config.FocusDuration
 	}
 
 	e.phaseStartedAt = time.Now()
