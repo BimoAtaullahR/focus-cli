@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"time"
 
+	"focus-cli/internal/model"
+
 	"google.golang.org/api/calendar/v3"
 )
 
@@ -74,3 +76,80 @@ func (c *Client) SyncSessionEvent(ctx context.Context, title string, startTime, 
 
 	return c.SyncSessionEventWithService(ctx, srv, title, startTime, endTime, calendarName)
 }
+
+// ImportTasksWithService mengimpor tugas dari Google Calendar menggunakan service yang diberikan
+func (c *Client) ImportTasksWithService(ctx context.Context, srv *calendar.Service, calendarName string) ([]model.Task, error) {
+	// 1. Temukan kalender berdasarkan nama
+	var calendarID string
+	
+	listCall := srv.CalendarList.List()
+	list, err := listCall.Do()
+	if err != nil {
+		return nil, fmt.Errorf("mengambil list kalender gagal: %w", err)
+	}
+
+	for _, entry := range list.Items {
+		if entry.Summary == calendarName {
+			calendarID = entry.Id
+			break
+		}
+	}
+
+	// Jika kalender tidak ditemukan, kembalikan kosong (tidak ada task)
+	if calendarID == "" {
+		return nil, nil
+	}
+
+	// 2. Ambil event dari kalender
+	// Membatasi pengambilan event dari 7 hari yang lalu sampai 7 hari ke depan agar tidak overload
+	timeMin := time.Now().Add(-7 * 24 * time.Hour).Format(time.RFC3339)
+	eventsCall := srv.Events.List(calendarID).SingleEvents(true).TimeMin(timeMin)
+	events, err := eventsCall.Do()
+	if err != nil {
+		return nil, fmt.Errorf("mengambil event kalender gagal: %w", err)
+	}
+
+	var tasks []model.Task
+	for _, item := range events.Items {
+		if item.Summary == "" {
+			continue
+		}
+
+		createdAt := time.Now()
+		if item.Created != "" {
+			if t, err := time.Parse(time.RFC3339, item.Created); err == nil {
+				createdAt = t
+			}
+		}
+
+		updatedAt := time.Now()
+		if item.Updated != "" {
+			if t, err := time.Parse(time.RFC3339, item.Updated); err == nil {
+				updatedAt = t
+			}
+		}
+
+		task := model.Task{
+			Title:          item.Summary,
+			Description:    item.Description,
+			Done:           false,
+			TargetSessions: 1,
+			CreatedAt:      createdAt,
+			UpdatedAt:      updatedAt,
+			GCalEventID:    item.Id,
+		}
+		tasks = append(tasks, task)
+	}
+
+	return tasks, nil
+}
+
+// ImportTasks mengimpor tugas dari Google Calendar
+func (c *Client) ImportTasks(ctx context.Context, calendarName string) ([]model.Task, error) {
+	srv, err := c.GetCalendarService(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return c.ImportTasksWithService(ctx, srv, calendarName)
+}
+

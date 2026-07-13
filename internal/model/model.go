@@ -15,6 +15,7 @@ type Task struct {
 	TimerTotalSessions int       `json:"timer_total_sessions,omitempty"`
 	CreatedAt          time.Time `json:"created_at"`
 	UpdatedAt          time.Time `json:"updated_at"`
+	GCalEventID        string    `json:"gcal_event_id,omitempty"`
 }
 
 type TaskStore struct {

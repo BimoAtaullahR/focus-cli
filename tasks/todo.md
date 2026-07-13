@@ -43,7 +43,7 @@
 ---
 
 ## Phase 3: Import Flow (Syncing Tasks from GCal to Focus-cli)
-- [ ] Task 6: Implement Task Import from GCal
+- [x] Task 6: Implement Task Import from GCal
   - Acceptance: `ImportTasks()` pulls today's events from the target calendar and maps them to `model.Task`.
   - Verify: Mock calendar events parse correctly into Tasks.
   - Files:
