@@ -25,7 +25,7 @@
 ---
 
 ## Phase 2: Export Flow (Syncing Focus Sessions to GCal)
-- [ ] Task 4: Implement GCal Event Export Service
+- [x] Task 4: Implement GCal Event Export Service
   - Acceptance: `SyncSessionEvent(title, startTime, endTime)` creates Google Calendar event under "Focus Sessions" calendar.
   - Verify: Run mock unit tests checking GCal payload structure.
   - Files:
