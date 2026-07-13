@@ -854,7 +854,9 @@ func runPomodoro(store *storage.Store, args []string) error {
 								}
 							}
 						}
-						_, _ = client.SyncSessionEvent(context.Background(), taskTitle, startedAt, endedAt, cfg.GCalCalendarName)
+						syncCtx, syncCancel := context.WithTimeout(context.Background(), 10*time.Second)
+						defer syncCancel()
+						_, _ = client.SyncSessionEvent(syncCtx, taskTitle, startedAt, endedAt, cfg.GCalCalendarName)
 					}()
 				}
 
