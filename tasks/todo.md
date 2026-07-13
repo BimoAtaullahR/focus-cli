@@ -8,7 +8,7 @@
     - [model.go](file:///home/bimoar/Documents/personal-projects/focus-cli/internal/model/model.go)
     - [storage.go](file:///home/bimoar/Documents/personal-projects/focus-cli/internal/storage/storage.go)
     - [storage_test.go](file:///home/bimoar/Documents/personal-projects/focus-cli/internal/storage/storage_test.go)
-- [ ] Task 2: Implement OAuth2 login with local redirect server
+- [x] Task 2: Implement OAuth2 login with local redirect server
   - Acceptance: `gcal.NewClient` initializes connection; `gcal.Login(ctx)` launches local server on port 8080/callback and fetches token.
   - Verify: Launch a mock/test function verifying browser opening and loopback listener.
   - Files:
