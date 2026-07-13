@@ -193,6 +193,10 @@ func Run(store *storage.Store) error {
 }
 
 func (m *Model) Init() tea.Cmd {
+	if m.config.GCalEnabled {
+		m.status = "Syncing with GCal..."
+		return tea.Batch(tea.WindowSize(), m.syncGCalCmd())
+	}
 	return tea.WindowSize()
 }
 
@@ -226,6 +230,43 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleEnginePhaseComplete(msg)
 	case engineCompleteMsg:
 		return m.handleEngineComplete()
+	case gcalSyncResultMsg:
+		m.status = ""
+		if msg.err != nil {
+			m.status = "GCal Sync Error: " + msg.err.Error()
+			return m, nil
+		}
+
+		if len(msg.tasks) == 0 {
+			m.status = "GCal: No new tasks."
+			return m, nil
+		}
+
+		// Merge imported tasks
+		importedCount := 0
+		for _, gt := range msg.tasks {
+			exists := false
+			for _, lt := range m.tasks.Tasks {
+				if lt.GCalEventID == gt.GCalEventID {
+					exists = true
+					break
+				}
+			}
+			if !exists {
+				gt.ID = m.tasks.NextID
+				m.tasks.NextID++
+				m.tasks.Tasks = append(m.tasks.Tasks, gt)
+				importedCount++
+			}
+		}
+
+		if importedCount > 0 {
+			_ = m.store.SaveTasks(m.tasks)
+			m.status = fmt.Sprintf("GCal: Imported %d new tasks.", importedCount)
+		} else {
+			m.status = "GCal: Already synchronized."
+		}
+		return m, nil
 	}
 	return m, nil
 }
@@ -1227,6 +1268,12 @@ func (m *Model) reload() (tea.Model, tea.Cmd) {
 	if len(m.tasks.Tasks) == 0 {
 		m.cursor = 0
 	}
+
+	if m.config.GCalEnabled {
+		m.status = "Syncing with GCal..."
+		return m, m.syncGCalCmd()
+	}
+
 	return m, nil
 }
 
@@ -1289,4 +1336,25 @@ func taskResumeLabel(task model.Task) string {
 		phase = "focus"
 	}
 	return fmt.Sprintf("resume %02d:%02d %s", task.TimerRemainingSec/60, task.TimerRemainingSec%60, phase)
+}
+
+type gcalSyncResultMsg struct {
+	tasks []model.Task
+	err   error
+}
+
+func (m *Model) syncGCalCmd() tea.Cmd {
+	return func() tea.Msg {
+		if !m.config.GCalEnabled {
+			return nil
+		}
+		client, err := gcal.NewClient(m.store)
+		if err != nil {
+			return gcalSyncResultMsg{err: err}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 7*time.Second)
+		defer cancel()
+		tasks, err := client.ImportTasks(ctx, m.config.GCalCalendarName)
+		return gcalSyncResultMsg{tasks: tasks, err: err}
+	}
 }

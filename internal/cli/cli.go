@@ -1030,7 +1030,68 @@ func runGCal(store *storage.Store, args []string) error {
 		return nil
 
 	case "sync":
-		return fmt.Errorf("sync command is not implemented yet. Please finish current tasks.")
+		cfg, err := store.LoadConfig()
+		if err != nil {
+			return err
+		}
+		if !cfg.GCalEnabled {
+			return errors.New("integrasi GCal dinonaktifkan dalam konfigurasi (gunakan 'focus config set --gcal-enabled on' untuk mengaktifkan)")
+		}
+
+		client, err := gcal.NewClient(store)
+		if err != nil {
+			return err
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		fmt.Println("Mengambil tugas dari Google Calendar...")
+		gcalTasks, err := client.ImportTasks(ctx, cfg.GCalCalendarName)
+		if err != nil {
+			return err
+		}
+
+		if len(gcalTasks) == 0 {
+			fmt.Println("Tidak ada tugas baru untuk diimpor.")
+			return nil
+		}
+
+		// Load local tasks
+		ts, err := store.LoadTasks()
+		if err != nil {
+			return err
+		}
+
+		importedCount := 0
+		for _, gt := range gcalTasks {
+			// Check if task already exists based on GCalEventID
+			exists := false
+			for _, lt := range ts.Tasks {
+				if lt.GCalEventID == gt.GCalEventID {
+					exists = true
+					break
+				}
+			}
+
+			if !exists {
+				gt.ID = ts.NextID
+				ts.NextID++
+				ts.Tasks = append(ts.Tasks, gt)
+				fmt.Printf("Mengimpor tugas baru: #%d %s\n", gt.ID, gt.Title)
+				importedCount++
+			}
+		}
+
+		if importedCount > 0 {
+			if err := store.SaveTasks(ts); err != nil {
+				return err
+			}
+			fmt.Printf("Sinkronisasi selesai. %d tugas berhasil diimpor.\n", importedCount)
+		} else {
+			fmt.Println("Semua tugas dari kalender sudah tersinkronisasi.")
+		}
+		return nil
 
 	default:
 		return fmt.Errorf("unknown gcal subcommand: %s", args[0])

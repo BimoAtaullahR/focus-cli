@@ -48,7 +48,7 @@
   - Verify: Mock calendar events parse correctly into Tasks.
   - Files:
     - [sync.go](file:///home/bimoar/Documents/personal-projects/focus-cli/internal/gcal/sync.go)
-- [ ] Task 7: Integrate GCal Sync inside CLI and TUI Refresh
+- [x] Task 7: Integrate GCal Sync inside CLI and TUI Refresh
   - Acceptance: `focus gcal sync` command runs; pressing `r` in TUI triggers asynchronous GCal sync.
   - Verify: GCal events are listed as tasks in the CLI/TUI after refresh.
   - Files:
@@ -56,4 +56,4 @@
     - [tui.go](file:///home/bimoar/Documents/personal-projects/focus-cli/internal/tui/tui.go)
 
 ### Checkpoint 3: Integration Complete
-- [ ] Verification: Comprehensive two-way sync works flawlessly, and dashboard renders sync state without blocking.
+- [x] Verification: Comprehensive two-way sync works flawlessly, and dashboard renders sync state without blocking.
