@@ -13,14 +13,14 @@
   - Verify: Launch a mock/test function verifying browser opening and loopback listener.
   - Files:
     - [client.go](file:///home/bimoar/Documents/personal-projects/focus-cli/internal/gcal/client.go) [NEW]
-- [ ] Task 3: CLI interface for gcal status, login, logout
+- [x] Task 3: CLI interface for gcal status, login, logout
   - Acceptance: CLI supports `focus gcal login`, `focus gcal logout`, `focus gcal status`.
   - Verify: Test commands in terminal and verify token is created/deleted.
   - Files:
     - [cli.go](file:///home/bimoar/Documents/personal-projects/focus-cli/internal/cli/cli.go)
 
 ### Checkpoint 1: Foundation Complete
-- [ ] Verification: `focus gcal login` logs in successfully, `focus gcal status` shows correct connected state.
+- [x] Verification: `focus gcal login` logs in successfully, `focus gcal status` shows correct connected state.
 
 ---
 

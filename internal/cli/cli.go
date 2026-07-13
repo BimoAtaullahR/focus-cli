@@ -17,6 +17,7 @@ import (
 	"focus-cli/internal/pomodoro"
 	"focus-cli/internal/storage"
 	"focus-cli/internal/tui"
+	"focus-cli/internal/gcal"
 )
 
 func Run(args []string) error {
@@ -80,6 +81,8 @@ func Run(args []string) error {
 		return runQuickTimer(args[1:])
 	case "stats":
 		return runStats(store)
+	case "gcal":
+		return runGCal(store, args[1:])
 	default:
 		return fmt.Errorf("unknown command: %s", args[0])
 	}
@@ -116,6 +119,7 @@ func printHelp() {
 	fmt.Println("      [--notify-sound on|off] [--notify-log on|off] [--notify-log-path path]")
 	fmt.Println("  timer [--minutes N] [--label text]")
 	fmt.Println("  stats")
+	fmt.Println("  gcal <login|logout|status|sync>")
 	fmt.Println("")
 	fmt.Println("Shortcuts:")
 	fmt.Println("  focus [N] [--task ID]")
@@ -928,4 +932,75 @@ func runStats(store *storage.Store) error {
 	}
 	fmt.Printf("tasks=%d completed-focus-sessions=%d\n", len(ts.Tasks), focusDone)
 	return nil
+}
+
+func runGCal(store *storage.Store, args []string) error {
+	if len(args) == 0 {
+		return errors.New("usage: gcal <login|logout|status|sync>")
+	}
+
+	switch args[0] {
+	case "login":
+		client, err := gcal.NewClient(store)
+		if err != nil {
+			return err
+		}
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		return client.Login(ctx)
+
+	case "logout":
+		err := store.DeleteGCalToken()
+		if err != nil {
+			return err
+		}
+		fmt.Println("GCal token deleted. Logged out.")
+		return nil
+
+	case "status":
+		// 1. Check credentials file
+		_, err := store.ReadGCalCredentials()
+		if err != nil {
+			fmt.Println("GCal Status: Credentials NOT configured.")
+			fmt.Println("Silakan letakkan file client_credentials.json Anda di ~/.config/focus-cli/gcal_credentials.json")
+			return nil
+		}
+		fmt.Println("GCal Credentials: Configured.")
+
+		// 2. Check token file
+		tokenBytes, err := store.LoadGCalToken()
+		if err != nil {
+			fmt.Println("GCal Token: NOT authenticated. Run 'focus gcal login' to connect.")
+			return nil
+		}
+		_ = tokenBytes // unused
+		fmt.Println("GCal Token: Authenticated.")
+
+		// 3. Test API connectivity & display account information
+		client, err := gcal.NewClient(store)
+		if err != nil {
+			fmt.Printf("GCal Client Error: %v\n", err)
+			return nil
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		srv, err := client.GetCalendarService(ctx)
+		if err != nil {
+			fmt.Printf("GCal API Connectivity: Failed (%v)\n", err)
+			return nil
+		}
+		cal, err := srv.Calendars.Get("primary").Do()
+		if err != nil {
+			fmt.Printf("GCal API Connectivity: Failed (%v)\n", err)
+			return nil
+		}
+		fmt.Printf("GCal API Connectivity: Connected (Account: %s)\n", cal.Summary)
+		return nil
+
+	case "sync":
+		return fmt.Errorf("sync command is not implemented yet. Please finish current tasks.")
+
+	default:
+		return fmt.Errorf("unknown gcal subcommand: %s", args[0])
+	}
 }
