@@ -762,7 +762,7 @@ func runPomodoro(store *storage.Store, args []string) error {
 	}
 
 	engine := pomodoro.NewSessionEngine(engineCfg)
-	
+
 	doneChan := make(chan error, 1)
 
 	engine.OnPhaseStart = func(state pomodoro.EngineState) {
@@ -910,8 +910,6 @@ func runSingleTimer(args []string) error {
 	fmt.Println("timer finished")
 	return nil
 }
-
-
 
 func runStats(store *storage.Store) error {
 	ts, err := store.LoadTasks()

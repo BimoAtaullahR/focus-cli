@@ -39,5 +39,3 @@ func TestParseOnOff(t *testing.T) {
 		})
 	}
 }
-
-

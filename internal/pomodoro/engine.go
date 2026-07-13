@@ -2,6 +2,7 @@ package pomodoro
 
 import (
 	"context"
+	"sync"
 	"time"
 )
 
@@ -32,6 +33,7 @@ type EngineConfig struct {
 }
 
 type SessionEngine struct {
+	mu     sync.Mutex
 	config EngineConfig
 
 	OnTick          func(state EngineState)
@@ -42,6 +44,7 @@ type SessionEngine struct {
 
 	state          EngineState
 	cancel         context.CancelFunc
+	runCtx         context.Context
 	phaseStartedAt time.Time
 	warnTriggered  bool
 }
@@ -63,27 +66,34 @@ func NewSessionEngine(config EngineConfig) *SessionEngine {
 }
 
 func (e *SessionEngine) Resume(phase Phase, sessionCount int, remaining time.Duration) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	e.state.Phase = phase
 	e.state.SessionCount = sessionCount
 	e.state.Remaining = remaining
 }
 
 func (e *SessionEngine) Start(ctx context.Context) {
+	e.mu.Lock()
 	if e.state.IsRunning {
+		e.mu.Unlock()
 		return
 	}
 	e.state.IsRunning = true
 	e.phaseStartedAt = time.Now()
 
-	ctx, cancel := context.WithCancel(ctx)
+	runCtx, cancel := context.WithCancel(ctx)
 	e.cancel = cancel
+	e.runCtx = runCtx
+	state := e.state
+	e.mu.Unlock()
 
 	if e.OnPhaseStart != nil {
-		e.OnPhaseStart(e.state)
+		e.OnPhaseStart(state)
 	}
 
 	if e.OnTick != nil {
-		e.OnTick(e.state)
+		e.OnTick(state)
 	}
 
 	go func() {
@@ -92,41 +102,91 @@ func (e *SessionEngine) Start(ctx context.Context) {
 
 		for {
 			select {
-			case <-ctx.Done():
-				e.state.IsRunning = false
+			case <-runCtx.Done():
+				e.mu.Lock()
+				if e.runCtx == runCtx {
+					e.state.IsRunning = false
+					e.cancel = nil
+					e.runCtx = nil
+				}
+				phase := e.state.Phase
+				sessionCount := e.state.SessionCount
+				phaseStartedAt := e.phaseStartedAt
+				e.mu.Unlock()
+
 				if e.OnPhaseComplete != nil {
-					e.OnPhaseComplete(e.state.Phase, e.state.SessionCount, e.phaseStartedAt, time.Now(), false)
+					e.OnPhaseComplete(phase, sessionCount, phaseStartedAt, time.Now(), false)
 				}
 				return
 			case <-ticker.C:
+				e.mu.Lock()
+				if !e.state.IsRunning || e.runCtx != runCtx {
+					e.mu.Unlock()
+					return
+				}
+
 				e.state.Remaining -= e.config.TickInterval
-				
+				if e.state.Remaining < 0 {
+					e.state.Remaining = 0
+				}
+
+				warn := false
 				if !e.warnTriggered && e.config.WarningDuration > 0 && e.state.Remaining <= e.config.WarningDuration {
 					e.warnTriggered = true
-					if e.OnSessionWarn != nil {
-						e.OnSessionWarn(e.state)
-					}
+					warn = true
+				}
+				state := e.state
+				e.mu.Unlock()
+
+				if warn && e.OnSessionWarn != nil {
+					e.OnSessionWarn(state)
+				}
+
+				e.mu.Lock()
+				// Double-check active run status
+				if !e.state.IsRunning || e.runCtx != runCtx {
+					e.mu.Unlock()
+					return
 				}
 
 				if e.state.Remaining <= 0 {
-					e.state.Remaining = 0
-					if e.OnTick != nil {
-						e.OnTick(e.state)
-					}
+					state = e.state
 					endedAt := time.Now()
 					completedPhase := e.state.Phase
 					completedSession := e.state.SessionCount
+					phaseStartedAt := e.phaseStartedAt
+					e.mu.Unlock()
+
+					if e.OnTick != nil {
+						e.OnTick(state)
+					}
 
 					if e.OnPhaseComplete != nil {
-						e.OnPhaseComplete(completedPhase, completedSession, e.phaseStartedAt, endedAt, true)
+						e.OnPhaseComplete(completedPhase, completedSession, phaseStartedAt, endedAt, true)
 					}
-					e.nextPhase()
-					if !e.state.IsRunning {
-						return // Completed
+
+					e.mu.Lock()
+					completed := e.nextPhase()
+					if completed {
+						e.mu.Unlock()
+						if e.OnComplete != nil {
+							e.OnComplete()
+						}
+						return
+					}
+					state = e.state
+					e.mu.Unlock()
+
+					if e.OnPhaseStart != nil {
+						e.OnPhaseStart(state)
+					}
+					if e.OnTick != nil {
+						e.OnTick(state)
 					}
 				} else {
+					e.mu.Unlock()
 					if e.OnTick != nil {
-						e.OnTick(e.state)
+						e.OnTick(state)
 					}
 				}
 			}
@@ -135,43 +195,58 @@ func (e *SessionEngine) Start(ctx context.Context) {
 }
 
 func (e *SessionEngine) Pause() {
-	if e.cancel != nil {
-		e.cancel()
-		e.cancel = nil
-	}
+	e.mu.Lock()
+	cancel := e.cancel
+	e.cancel = nil
+	e.runCtx = nil
 	e.state.IsRunning = false
+	e.mu.Unlock()
+
+	if cancel != nil {
+		cancel()
+	}
 }
 
 func (e *SessionEngine) Stop() {
-	if e.cancel != nil {
-		e.cancel()
-		e.cancel = nil
-	}
+	e.mu.Lock()
+	cancel := e.cancel
+	e.cancel = nil
+	e.runCtx = nil
 	e.state.IsRunning = false
-	if e.OnPhaseComplete != nil {
-		e.OnPhaseComplete(e.state.Phase, e.state.SessionCount, e.phaseStartedAt, time.Now(), false)
+	phase := e.state.Phase
+	sessionCount := e.state.SessionCount
+	phaseStartedAt := e.phaseStartedAt
+	e.mu.Unlock()
+
+	if cancel != nil {
+		cancel()
+	} else {
+		if e.OnPhaseComplete != nil {
+			e.OnPhaseComplete(phase, sessionCount, phaseStartedAt, time.Now(), false)
+		}
 	}
 }
 
-// AdvancePhase manually completes the current phase.
-// It sets remaining to 0 which will be picked up by the tick loop to transition to next phase.
 func (e *SessionEngine) AdvancePhase() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	e.state.Remaining = 0
 }
 
-func (e *SessionEngine) nextPhase() {
+func (e *SessionEngine) nextPhase() bool {
 	e.warnTriggered = false
 	if e.state.Phase == PhaseFocus {
 		if e.state.SessionCount >= e.config.TargetSessions {
 			e.state.IsRunning = false
-			if e.cancel != nil {
-				e.cancel()
-				e.cancel = nil
+			e.runCtx = nil
+			cancel := e.cancel
+			e.cancel = nil
+			e.mu.Unlock()
+			if cancel != nil {
+				cancel()
 			}
-			if e.OnComplete != nil {
-				e.OnComplete()
-			}
-			return
+			e.mu.Lock()
+			return true
 		}
 
 		if e.state.SessionCount%e.config.LongBreakEvery == 0 {
@@ -182,22 +257,17 @@ func (e *SessionEngine) nextPhase() {
 			e.state.Remaining = e.config.ShortBreakDuration
 		}
 	} else {
-		// From break to focus
 		e.state.SessionCount++
 		e.state.Phase = PhaseFocus
 		e.state.Remaining = e.config.FocusDuration
 	}
 
 	e.phaseStartedAt = time.Now()
-
-	if e.OnPhaseStart != nil {
-		e.OnPhaseStart(e.state)
-	}
-	if e.OnTick != nil {
-		e.OnTick(e.state)
-	}
+	return false
 }
 
 func (e *SessionEngine) State() EngineState {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	return e.state
 }

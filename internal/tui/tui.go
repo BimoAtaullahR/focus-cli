@@ -80,14 +80,14 @@ type Model struct {
 	cursor int
 	mode   int
 
-	status   string
-	form     *formState
-	confirm  *confirmState
-	run      *runState
-	engine   *pomodoro.SessionEngine
-	engineCtx context.Context
+	status       string
+	form         *formState
+	confirm      *confirmState
+	run          *runState
+	engine       *pomodoro.SessionEngine
+	engineCtx    context.Context
 	engineCancel context.CancelFunc
-	engineChan chan tea.Msg
+	engineChan   chan tea.Msg
 
 	tickID   int
 	ready    bool
@@ -286,7 +286,7 @@ func (m *Model) handleEnginePhaseStart(msg enginePhaseStartMsg) (tea.Model, tea.
 	m.run.startedAt = time.Now()
 	m.run.paused = false
 	m.run.notifiedWarning = false
-	
+
 	return m, waitForEngineMsg(m.engineChan)
 }
 
@@ -329,7 +329,7 @@ func (m *Model) handleEnginePhaseComplete(msg enginePhaseCompleteMsg) (tea.Model
 			TaskID:     m.run.taskID,
 			Message:    "Sesi fokus selesai. Saatnya istirahat.",
 		})
-		
+
 		if m.run.taskID > 0 {
 			for i := range m.tasks.Tasks {
 				if m.tasks.Tasks[i].ID == m.run.taskID {
@@ -358,7 +358,7 @@ func (m *Model) handleEnginePhaseComplete(msg enginePhaseCompleteMsg) (tea.Model
 			Message:    "Waktu istirahat selesai. Kembali fokus.",
 		})
 	}
-	
+
 	if isTaskComplete {
 		m.notifyAsync(model.NotificationEvent{
 			Type:       model.NotificationTaskComplete,
@@ -424,15 +424,16 @@ func (m *Model) beginFocusCycle(taskID, totalSessions int) (tea.Model, tea.Cmd) 
 	m.engine = pomodoro.NewSessionEngine(engineCfg)
 	m.engineCtx, m.engineCancel = context.WithCancel(context.Background())
 	m.engineChan = make(chan tea.Msg, 100)
+	ch := m.engineChan
 
 	m.engine.OnTick = func(state pomodoro.EngineState) {
-		m.engineChan <- engineTickMsg(state)
+		ch <- engineTickMsg(state)
 	}
 	m.engine.OnPhaseStart = func(state pomodoro.EngineState) {
-		m.engineChan <- enginePhaseStartMsg(state)
+		ch <- enginePhaseStartMsg(state)
 	}
 	m.engine.OnPhaseComplete = func(phase pomodoro.Phase, sessionCount int, startedAt, endedAt time.Time, completed bool) {
-		m.engineChan <- enginePhaseCompleteMsg{
+		ch <- enginePhaseCompleteMsg{
 			Phase:        phase,
 			SessionCount: sessionCount,
 			StartedAt:    startedAt,
@@ -441,10 +442,10 @@ func (m *Model) beginFocusCycle(taskID, totalSessions int) (tea.Model, tea.Cmd) 
 		}
 	}
 	m.engine.OnSessionWarn = func(state pomodoro.EngineState) {
-		m.engineChan <- engineSessionWarnMsg(state)
+		ch <- engineSessionWarnMsg(state)
 	}
 	m.engine.OnComplete = func() {
-		m.engineChan <- engineCompleteMsg{}
+		ch <- engineCompleteMsg{}
 	}
 
 	m.run = &runState{
@@ -459,11 +460,11 @@ func (m *Model) beginFocusCycle(taskID, totalSessions int) (tea.Model, tea.Cmd) 
 		paused:          false,
 		notifiedWarning: false,
 	}
-	
+
 	m.mode = modeRunning
 	m.status = fmt.Sprintf("Semangat! Fokus sesi 1/%d dimulai.", totalSessions)
-	
-	go m.engine.Start(m.engineCtx)
+
+	m.engine.Start(m.engineCtx)
 
 	return m, waitForEngineMsg(m.engineChan)
 }
@@ -598,6 +599,12 @@ func (m *Model) updateConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m *Model) updateRun(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case keyIs(msg, "ctrl+c", "esc", m.config.Keys.Quit):
+		if m.engine != nil {
+			m.engine.Stop()
+		}
+		if m.engineCancel != nil {
+			m.engineCancel()
+		}
 		m.saveCurrentRunProgress()
 		m.status = "Cycle dihentikan. Tidak apa-apa, kamu bisa lanjut kapan saja."
 		m.mode = modeDashboard
@@ -618,7 +625,7 @@ func (m *Model) updateRun(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.status = "Timer dijeda. Tarik napas, lanjut saat siap."
 		} else {
 			if m.engine != nil {
-				go m.engine.Start(m.engineCtx)
+				m.engine.Start(m.engineCtx)
 			}
 			m.status = "Lanjut lagi. Fokusmu mantap!"
 		}
@@ -1078,15 +1085,16 @@ func (m *Model) startSelectedCycle() (tea.Model, tea.Cmd) {
 			m.engine.Resume(pPhase, sessionIndex, time.Duration(task.TimerRemainingSec)*time.Second)
 			m.engineCtx, m.engineCancel = context.WithCancel(context.Background())
 			m.engineChan = make(chan tea.Msg, 100)
+			ch := m.engineChan
 
 			m.engine.OnTick = func(state pomodoro.EngineState) {
-				m.engineChan <- engineTickMsg(state)
+				ch <- engineTickMsg(state)
 			}
 			m.engine.OnPhaseStart = func(state pomodoro.EngineState) {
-				m.engineChan <- enginePhaseStartMsg(state)
+				ch <- enginePhaseStartMsg(state)
 			}
 			m.engine.OnPhaseComplete = func(phase pomodoro.Phase, sessionCount int, startedAt, endedAt time.Time, completed bool) {
-				m.engineChan <- enginePhaseCompleteMsg{
+				ch <- enginePhaseCompleteMsg{
 					Phase:        phase,
 					SessionCount: sessionCount,
 					StartedAt:    startedAt,
@@ -1095,10 +1103,10 @@ func (m *Model) startSelectedCycle() (tea.Model, tea.Cmd) {
 				}
 			}
 			m.engine.OnSessionWarn = func(state pomodoro.EngineState) {
-				m.engineChan <- engineSessionWarnMsg(state)
+				ch <- engineSessionWarnMsg(state)
 			}
 			m.engine.OnComplete = func() {
-				m.engineChan <- engineCompleteMsg{}
+				ch <- engineCompleteMsg{}
 			}
 
 			m.run = &runState{
@@ -1117,7 +1125,7 @@ func (m *Model) startSelectedCycle() (tea.Model, tea.Cmd) {
 			m.status = fmt.Sprintf("Melanjutkan timer '%s' dari %02d:%02d.", task.Title, task.TimerRemainingSec/60, task.TimerRemainingSec%60)
 			m.tickID++
 
-			go m.engine.Start(m.engineCtx)
+			m.engine.Start(m.engineCtx)
 
 			return m, waitForEngineMsg(m.engineChan)
 		}

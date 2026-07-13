@@ -80,8 +80,6 @@ func TestMoveTaskPersistsOrder(t *testing.T) {
 	}
 }
 
-
-
 func TestStartCycleBlockedForDoneTask(t *testing.T) {
 	m := newTestModel(t)
 	m.cursor = 0
@@ -163,11 +161,11 @@ func TestTUI_EngineTickUpdatesView(t *testing.T) {
 		IsRunning:     true,
 	}
 	msg := engineTickMsg(state)
-	
+
 	newModel, _ := m.Update(msg)
-	
+
 	viewStr := newModel.View()
-	
+
 	if !strings.Contains(viewStr, "00:59") {
 		t.Errorf("expected view to contain 00:59, got:\n%s", viewStr)
 	}
