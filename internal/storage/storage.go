@@ -49,6 +49,34 @@ func (s *Store) historyPath() string {
 	return filepath.Join(s.baseDir, "history.json")
 }
 
+func (s *Store) gcalCredentialsPath() string {
+	return filepath.Join(s.baseDir, "gcal_credentials.json")
+}
+
+func (s *Store) gcalTokenPath() string {
+	return filepath.Join(s.baseDir, "gcal_token.json")
+}
+
+func (s *Store) ReadGCalCredentials() ([]byte, error) {
+	return os.ReadFile(s.gcalCredentialsPath())
+}
+
+func (s *Store) SaveGCalToken(data []byte) error {
+	return os.WriteFile(s.gcalTokenPath(), data, 0o600)
+}
+
+func (s *Store) LoadGCalToken() ([]byte, error) {
+	return os.ReadFile(s.gcalTokenPath())
+}
+
+func (s *Store) DeleteGCalToken() error {
+	err := os.Remove(s.gcalTokenPath())
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return err
+}
+
 func (s *Store) LoadTasks() (model.TaskStore, error) {
 	var out model.TaskStore
 	b, err := os.ReadFile(s.tasksPath())

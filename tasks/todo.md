@@ -1,7 +1,7 @@
 # Tasks: Google Calendar Integration
 
 ## Phase 1: Foundation (OAuth2 & Local Storage)
-- [ ] Task 1: Setup storage for OAuth2 credentials and token
+- [x] Task 1: Setup storage for OAuth2 credentials and token
   - Acceptance: `model.Config` updated with GCal settings; `Store` has functions to read/write credentials and token.
   - Verify: Run storage tests and ensure model changes do not break loading config.
   - Files:

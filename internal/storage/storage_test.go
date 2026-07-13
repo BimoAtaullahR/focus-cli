@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -34,3 +35,87 @@ func TestStoreRoundTrip(t *testing.T) {
 		t.Fatalf("unexpected tasks path: %s", got)
 	}
 }
+
+func TestStoreGCal(t *testing.T) {
+	cfgHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfgHome)
+
+	s, err := NewStore()
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+
+	// 1. Test GCal config defaults in LoadConfig
+	cfg, err := s.LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	if cfg.GCalEnabled {
+		t.Errorf("expected GCalEnabled to be false by default")
+	}
+	if cfg.GCalCalendarName != "Focus Sessions" {
+		t.Errorf("expected GCalCalendarName to be 'Focus Sessions', got '%s'", cfg.GCalCalendarName)
+	}
+
+	// 2. Test saving and loading custom GCal config
+	cfg.GCalEnabled = true
+	cfg.GCalCalendarID = "calendar-123"
+	err = s.SaveConfig(cfg)
+	if err != nil {
+		t.Fatalf("SaveConfig() error = %v", err)
+	}
+
+	cfg2, err := s.LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	if !cfg2.GCalEnabled {
+		t.Errorf("expected GCalEnabled to be true after save")
+	}
+	if cfg2.GCalCalendarID != "calendar-123" {
+		t.Errorf("expected GCalCalendarID to be 'calendar-123', got '%s'", cfg2.GCalCalendarID)
+	}
+
+	// 3. Test OAuth token read/write
+	tokenJSON := `{"access_token":"token-123","token_type":"Bearer","refresh_token":"refresh-123","expiry":"2026-07-13T21:18:14Z"}`
+	err = s.SaveGCalToken([]byte(tokenJSON))
+	if err != nil {
+		t.Fatalf("SaveGCalToken() error = %v", err)
+	}
+
+	loadedToken, err := s.LoadGCalToken()
+	if err != nil {
+		t.Fatalf("LoadGCalToken() error = %v", err)
+	}
+	if string(loadedToken) != tokenJSON {
+		t.Errorf("expected token '%s', got '%s'", tokenJSON, string(loadedToken))
+	}
+
+	// 4. Test deleting token
+	err = s.DeleteGCalToken()
+	if err != nil {
+		t.Fatalf("DeleteGCalToken() error = %v", err)
+	}
+	_, err = s.LoadGCalToken()
+	if err == nil {
+		t.Errorf("expected error loading token after deletion")
+	}
+
+	// 5. Test reading GCal credentials file
+	credentialsJSON := `{"installed":{"client_id":"client-id","client_secret":"client-secret"}}`
+	// Write directly to file system to mock user placing the credentials
+	credsPath := filepath.Join(cfgHome, "focus-cli", "gcal_credentials.json")
+	err = os.WriteFile(credsPath, []byte(credentialsJSON), 0644)
+	if err != nil {
+		t.Fatalf("failed to write mock credentials: %v", err)
+	}
+
+	loadedCreds, err := s.ReadGCalCredentials()
+	if err != nil {
+		t.Fatalf("ReadGCalCredentials() error = %v", err)
+	}
+	if string(loadedCreds) != credentialsJSON {
+		t.Errorf("expected credentials '%s', got '%s'", credentialsJSON, string(loadedCreds))
+	}
+}
+

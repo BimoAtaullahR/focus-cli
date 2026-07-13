@@ -30,6 +30,9 @@ type Config struct {
 	Theme             string              `json:"theme"`
 	Keys              Keys                `json:"keys"`
 	Notifications     *NotificationConfig `json:"notifications,omitempty"`
+	GCalEnabled       bool                `json:"gcal_enabled"`
+	GCalCalendarName  string              `json:"gcal_calendar_name"`
+	GCalCalendarID    string              `json:"gcal_calendar_id"`
 }
 
 type NotificationConfig struct {
@@ -109,6 +112,9 @@ func DefaultConfig() Config {
 		Theme:             "sunrise",
 		Keys:              DefaultKeys(),
 		Notifications:     DefaultNotificationConfig(),
+		GCalEnabled:       false,
+		GCalCalendarName:  "Focus Sessions",
+		GCalCalendarID:    "",
 	}
 }
 
@@ -250,6 +256,9 @@ func NormalizeConfig(cfg Config) Config {
 		if cfg.Notifications.LogFile == nil {
 			cfg.Notifications.LogFile = def.Notifications.LogFile
 		}
+	}
+	if cfg.GCalCalendarName == "" {
+		cfg.GCalCalendarName = def.GCalCalendarName
 	}
 	return cfg
 }
