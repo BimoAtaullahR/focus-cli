@@ -30,7 +30,7 @@
   - Verify: Run mock unit tests checking GCal payload structure.
   - Files:
     - [sync.go](file:///home/bimoar/Documents/personal-projects/focus-cli/internal/gcal/sync.go) [NEW]
-- [ ] Task 5: Auto-export pomodoro sessions on completion
+- [x] Task 5: Auto-export pomodoro sessions on completion
   - Acceptance: Finished focus sessions in CLI and TUI trigger background GCal sync asynchronously.
   - Verify: Start and complete a short pomodoro session, confirm event shows on Google Calendar.
   - Files:
@@ -38,7 +38,7 @@
     - [tui.go](file:///home/bimoar/Documents/personal-projects/focus-cli/internal/tui/tui.go)
 
 ### Checkpoint 2: Export Complete
-- [ ] Verification: Focus sessions successfully logged to user's Google Calendar from both CLI and TUI.
+- [x] Verification: Focus sessions successfully logged to user's Google Calendar from both CLI and TUI.
 
 ---
 

@@ -394,7 +394,7 @@ func runConfig(store *storage.Store, args []string) error {
 
 	switch args[0] {
 	case "show":
-		fmt.Printf("focus=%d short=%d long=%d long-every=%d theme=%s\n", cfg.FocusMinutes, cfg.ShortBreakMinutes, cfg.LongBreakMinutes, cfg.LongBreakEvery, cfg.Theme)
+		fmt.Printf("focus=%d short=%d long=%d long-every=%d theme=%s gcal-enabled=%v gcal-calendar-name=%q\n", cfg.FocusMinutes, cfg.ShortBreakMinutes, cfg.LongBreakMinutes, cfg.LongBreakEvery, cfg.Theme, cfg.GCalEnabled, cfg.GCalCalendarName)
 		printNotifications(cfg)
 		return nil
 	case "set":
@@ -410,6 +410,8 @@ func runConfig(store *storage.Store, args []string) error {
 		notifySound := fs.String("notify-sound", "", "sound notification on|off")
 		notifyLog := fs.String("notify-log", "", "log notification on|off")
 		notifyLogPath := fs.String("notify-log-path", "", "notification log file path")
+		gcalEnabled := fs.String("gcal-enabled", "", "gcal integration on|off")
+		gcalCalendarName := fs.String("gcal-calendar-name", "", "gcal calendar name for focus sessions")
 		if err := fs.Parse(args[1:]); err != nil {
 			return err
 		}
@@ -480,6 +482,17 @@ func runConfig(store *storage.Store, args []string) error {
 			}
 			cfg.Notifications.LogFile.Enabled = v
 		}
+		if *gcalEnabled != "" {
+			v, err := parseOnOff(*gcalEnabled)
+			if err != nil {
+				return fmt.Errorf("--gcal-enabled: %w", err)
+			}
+			cfg.GCalEnabled = v
+		}
+		if *gcalCalendarName != "" {
+			cfg.GCalCalendarName = strings.TrimSpace(*gcalCalendarName)
+		}
+
 		if cfg.FocusMinutes < 1 || cfg.ShortBreakMinutes < 1 || cfg.LongBreakMinutes < 1 || cfg.LongBreakEvery < 1 {
 			return errors.New("all config values must be >= 1")
 		}
@@ -825,6 +838,25 @@ func runPomodoro(store *storage.Store, args []string) error {
 					TaskID:     *taskID,
 					Message:    "Sesi fokus selesai. Saatnya istirahat.",
 				})
+
+				if cfg.GCalEnabled {
+					go func() {
+						client, err := gcal.NewClient(store)
+						if err != nil {
+							return
+						}
+						taskTitle := "Pomodoro Session"
+						if *taskID > 0 {
+							for _, t := range ts.Tasks {
+								if t.ID == *taskID {
+									taskTitle = t.Title
+									break
+								}
+							}
+						}
+						_, _ = client.SyncSessionEvent(context.Background(), taskTitle, startedAt, endedAt, cfg.GCalCalendarName)
+					}()
+				}
 
 				if *taskID > 0 {
 					for ti := range ts.Tasks {

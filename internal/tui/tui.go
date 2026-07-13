@@ -16,6 +16,7 @@ import (
 	"focus-cli/internal/notify"
 	"focus-cli/internal/pomodoro"
 	"focus-cli/internal/storage"
+	"focus-cli/internal/gcal"
 )
 
 const (
@@ -330,6 +331,17 @@ func (m *Model) handleEnginePhaseComplete(msg enginePhaseCompleteMsg) (tea.Model
 			Message:    "Sesi fokus selesai. Saatnya istirahat.",
 		})
 
+		taskTitle := "Pomodoro Session"
+		if m.run.taskID > 0 {
+			for i := range m.tasks.Tasks {
+				if m.tasks.Tasks[i].ID == m.run.taskID {
+					taskTitle = m.tasks.Tasks[i].Title
+					break
+				}
+			}
+		}
+		m.syncGCalAsync(taskTitle, msg.StartedAt, msg.EndedAt)
+
 		if m.run.taskID > 0 {
 			for i := range m.tasks.Tasks {
 				if m.tasks.Tasks[i].ID == m.run.taskID {
@@ -391,6 +403,19 @@ func (m *Model) notifyAsync(event model.NotificationEvent) {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 		_ = m.notifier.SendNotification(ctx, event)
+	}()
+}
+
+func (m *Model) syncGCalAsync(title string, startTime, endTime time.Time) {
+	if !m.config.GCalEnabled {
+		return
+	}
+	go func() {
+		client, err := gcal.NewClient(m.store)
+		if err != nil {
+			return
+		}
+		_, _ = client.SyncSessionEvent(context.Background(), title, startTime, endTime, m.config.GCalCalendarName)
 	}()
 }
 
