@@ -194,6 +194,39 @@ focus set focus 30
 focus stats
 ```
 
+### Google Calendar Integration
+
+`focus-cli` mendukung integrasi dua arah dengan Google Calendar untuk mencatat sesi fokus yang selesai dan mengimpor tugas dari kalender.
+
+Untuk mulai menggunakan fitur ini, Anda perlu membuat kredensial API Google Anda sendiri secara mandiri. Silakan baca **[Panduan Setup Google Calendar](docs/gcal-setup.md)** untuk langkah penyiapan detailnya.
+
+#### CLI Command
+Setelah setup kredensial selesai:
+
+1. **Login & Otentikasi**:
+   ```bash
+   focus gcal login
+   ```
+2. **Cek Status Koneksi**:
+   ```bash
+   focus gcal status
+   ```
+3. **Aktifkan Fitur**:
+   ```bash
+   focus config set --gcal-enabled on
+   ```
+4. **Sinkronisasi Tugas**:
+   ```bash
+   focus gcal sync
+   ```
+5. **Logout**:
+   ```bash
+   focus gcal logout
+   ```
+
+#### Mode TUI
+Saat integrasi GCal aktif (`gcal-enabled=true`), dashboard interaktif TUI akan secara otomatis mengimpor tugas baru dari kalender Google Anda pada saat startup. Anda juga dapat menekan tombol **`r`** (refresh) di dashboard untuk memicu sinkronisasi ulang tugas secara asinkron di background tanpa membekukan tampilan UI.
+
 ## Lokasi Data
 
 Data disimpan di:
