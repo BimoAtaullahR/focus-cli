@@ -88,3 +88,30 @@ Setelah langkah di atas selesai, Anda dapat mengaktifkan sinkronisasi otomatis m
 ```bash
 focus config set --gcal-enabled on
 ```
+
+---
+
+## Penyelesaian Masalah (Troubleshooting)
+
+Berikut adalah beberapa kendala umum yang sering terjadi saat melakukan setup integrasi Google Calendar dan cara mengatasinya:
+
+### 1. Error `Access blocked: focus-cli has not completed the Google verification process` (Error 403: access_denied)
+* **Penyebab**: Alamat email Google yang Anda gunakan untuk login belum didaftarkan sebagai *Test User*. Karena aplikasi berada dalam status *Testing*, Google membatasi akses login.
+* **Solusi**:
+  1. Buka [Google Cloud Console](https://console.cloud.google.com/).
+  2. Buka menu **APIs & Services** > **OAuth consent screen**.
+  3. Gulir ke bagian **Test users** dan klik **Add Users**.
+  4. Tambahkan email Google Anda, simpan, lalu coba jalankan `focus gcal login` kembali.
+
+### 2. Error `Google Calendar API has not been used in project [ID] before or it is disabled`
+* **Penyebab**: Google Calendar API belum diaktifkan pada proyek GCP Anda.
+* **Solusi**:
+  1. Buka tautan aktivasi yang tertera di pesan error terminal Anda, atau buka menu **APIs & Services** > **Library** di Google Cloud Console.
+  2. Cari **Google Calendar API** dan klik tombol **Enable** (Aktifkan).
+  3. Tunggu 1–2 menit agar perubahan diterapkan oleh Google, lalu periksa kembali menggunakan `focus gcal status`.
+
+### 3. Error Izin/Permission saat Sinkronisasi (Gagal membuat/menemukan kalender)
+* **Penyebab**: Saat melakukan otentikasi pertama kali di browser, Anda tidak mencentang opsi izin akses penuh ke Google Calendar.
+* **Solusi**:
+  1. Jalankan kembali perintah `focus gcal login`.
+  2. Saat halaman persetujuan Google muncul di browser, pastikan Anda **mencentang semua kotak centang izin** yang diminta (termasuk izin untuk melihat, mengedit, dan mengelola kalender Anda secara permanen). Izin ini aman dan hanya digunakan oleh `focus-cli` untuk membuat kalender khusus bernama `Focus Sessions`.
