@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"focus-cli/internal/model"
 )
@@ -189,4 +190,19 @@ func ensureSoundFiles(baseDir string) error {
 // GetSoundFilePath returns the path to the default notification sound file
 func (s *Store) GetSoundFilePath() string {
 	return filepath.Join(s.baseDir, "notification.wav")
+}
+
+// LogError writes an error message with a timestamp to error.log
+func (s *Store) LogError(err error) {
+	if err == nil {
+		return
+	}
+	logPath := filepath.Join(s.baseDir, "error.log")
+	f, fileErr := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if fileErr != nil {
+		return
+	}
+	defer f.Close()
+	timestamp := time.Now().Format("2006-01-02 15:04:05")
+	_, _ = fmt.Fprintf(f, "[%s] %v\n", timestamp, err)
 }

@@ -378,11 +378,14 @@ func runTask(store *storage.Store, args []string) error {
 						go func(eventID, calendarName string) {
 							client, err := gcal.NewClient(store)
 							if err != nil {
+								store.LogError(fmt.Errorf("gcal client init failed: %w", err))
 								return
 							}
 							ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 							defer cancel()
-							_ = client.MarkEventAsDone(ctx, eventID, calendarName)
+							if err := client.MarkEventAsDone(ctx, eventID, calendarName); err != nil {
+								store.LogError(fmt.Errorf("gcal mark event as done failed: %w", err))
+							}
 						}(ts.Tasks[i].GCalEventID, cfg.GCalCalendarName)
 					}
 				}
@@ -920,11 +923,14 @@ func runPomodoro(store *storage.Store, args []string) error {
 									go func(eventID, calendarName string) {
 										client, err := gcal.NewClient(store)
 										if err != nil {
+											store.LogError(fmt.Errorf("gcal client init failed: %w", err))
 											return
 										}
 										ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 										defer cancel()
-										_ = client.MarkEventAsDone(ctx, eventID, calendarName)
+										if err := client.MarkEventAsDone(ctx, eventID, calendarName); err != nil {
+											store.LogError(fmt.Errorf("gcal mark event as done failed: %w", err))
+										}
 									}(ts.Tasks[ti].GCalEventID, cfg.GCalCalendarName)
 								}
 							}

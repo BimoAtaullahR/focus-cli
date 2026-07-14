@@ -1,8 +1,10 @@
 package storage
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -176,6 +178,30 @@ func TestTaskStoreRoundTrip(t *testing.T) {
 
 	if len(loadedTS.DeletedGCalEventIDs) != 2 || loadedTS.DeletedGCalEventIDs[0] != "deleted-event-1" || loadedTS.DeletedGCalEventIDs[1] != "deleted-event-2" {
 		t.Errorf("unexpected DeletedGCalEventIDs loaded: %v", loadedTS.DeletedGCalEventIDs)
+	}
+}
+
+func TestLogError(t *testing.T) {
+	cfgHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfgHome)
+
+	s, err := NewStore()
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+
+	errToLog := errors.New("test mock error")
+	s.LogError(errToLog)
+
+	logPath := filepath.Join(cfgHome, "focus-cli", "error.log")
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("failed to read error.log: %v", err)
+	}
+
+	content := string(data)
+	if !strings.Contains(content, "test mock error") {
+		t.Errorf("expected error log to contain 'test mock error', got: %q", content)
 	}
 }
 

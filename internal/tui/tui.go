@@ -400,9 +400,12 @@ func (m *Model) handleEnginePhaseComplete(msg enginePhaseCompleteMsg) (tea.Model
 							go func(eventID string) {
 								client, err := gcal.NewClient(m.store)
 								if err != nil {
+									m.store.LogError(fmt.Errorf("gcal client init failed: %w", err))
 									return
 								}
-								_ = client.MarkEventAsDone(context.Background(), eventID, m.config.GCalCalendarName)
+								if err := client.MarkEventAsDone(context.Background(), eventID, m.config.GCalCalendarName); err != nil {
+									m.store.LogError(fmt.Errorf("gcal mark event as done failed: %w", err))
+								}
 							}(m.tasks.Tasks[i].GCalEventID)
 						}
 					}
@@ -1087,9 +1090,12 @@ func (m *Model) toggleTask(id int) {
 					go func(eventID string) {
 						client, err := gcal.NewClient(m.store)
 						if err != nil {
+							m.store.LogError(fmt.Errorf("gcal client init failed: %w", err))
 							return
 						}
-						_ = client.MarkEventAsDone(context.Background(), eventID, m.config.GCalCalendarName)
+						if err := client.MarkEventAsDone(context.Background(), eventID, m.config.GCalCalendarName); err != nil {
+							m.store.LogError(fmt.Errorf("gcal mark event as done failed: %w", err))
+						}
 					}(m.tasks.Tasks[i].GCalEventID)
 				}
 			} else {
