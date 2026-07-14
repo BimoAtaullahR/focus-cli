@@ -20,6 +20,54 @@ Pomodoro app berbasis terminal Linux, ditulis dengan Go (hasil dari vibe coding 
 - Notifikasi sesi: warning sebelum waktu habis, fokus/break selesai, dan task selesai
 - Save & resume progress timer per task (lanjut dari sisa waktu terakhir)
 
+## 📅 Integrasi Google Calendar (GCal)
+
+`focus-cli` mendukung integrasi dua arah dengan Google Calendar untuk mencatat sesi fokus pomodoro secara otomatis (Time Tracking) dan mengimpor daftar tugas (Task Import) secara asinkron.
+
+> [!IMPORTANT]
+> Untuk mulai menggunakan fitur ini, Anda perlu membuat kredensial API Google Anda sendiri secara mandiri. Silakan baca panduan lengkap di **[Panduan Setup Google Calendar](docs/gcal-setup.md)**.
+
+### Fitur Utama Integrasi GCal:
+
+1. **Sinkronisasi Tugas Asinkron (Mode TUI)**
+   Saat integrasi GCal aktif (`gcal-enabled=true`), dashboard TUI akan otomatis mengimpor tugas baru saat startup. Anda juga dapat menekan tombol **`r`** untuk menyegarkan dan melakukan sinkronisasi ulang di background tanpa memblokir/membekukan UI.
+
+2. **Dukungan Format Judul Kustom (Dinamis)**
+   Anda dapat menulis detail sesi langsung di judul event Google Calendar dengan konvensi berikut:
+   - **`[Focus/Break] Nama Tugas`** (misal: `[50/10] Menulis Laporan`): Mengatur durasi fokus 50 menit dan break 10 menit. Jumlah target sesi pomodoro akan dihitung dinamis berdasarkan durasi event GCal.
+   - **`[N] Nama Tugas`** (misal: `[4] Belajar Go`): Mengatur target sesi pomodoro sebanyak `N` sesi secara eksplisit.
+   - **Penyaringan Pintar**: Event dengan judul berawalan `[Done]`, `[Selesai]`, atau `Focus:` akan otomatis diabaikan.
+
+3. **Pembaruan Status Selesai Otomatis**
+   Menandai tugas selesai secara lokal (di CLI maupun TUI) akan memicu pembaruan judul event di Google Calendar secara asinkron menjadi berawalan `[Done] ` (misal: `[Done] [50/10] Menulis Laporan`).
+
+4. **Penghapusan Tugas & Pencegahan Re-impor**
+   Menghapus tugas lokal akan merekam ID event-nya ke daftar tombstone (`DeletedGCalEventIDs`) sehingga tugas yang sudah dihapus tidak akan diimpor ulang pada sinkronisasi berikutnya.
+
+5. **Penanganan Error Graceful**
+   Jika koneksi terputus atau terjadi kegagalan otentikasi Google API, aplikasi tidak akan macet/freeze. Semua kegagalan di latar belakang akan dicatat secara asinkron ke dalam berkas `~/.config/focus-cli/error.log` untuk kemudahan debugging.
+
+### Perintah CLI GCal
+
+Setelah menaruh file kredensial Anda, gunakan perintah berikut untuk otentikasi dan konfigurasi:
+
+```bash
+# Otentikasi dan login ke akun Google Calendar
+focus gcal login
+
+# Periksa status koneksi Google API
+focus gcal status
+
+# Aktifkan integrasi Google Calendar di aplikasi
+focus config set --gcal-enabled on
+
+# Jalankan sinkronisasi tugas secara manual
+focus gcal sync
+
+# Logout dan hapus token secara aman
+focus gcal logout
+```
+
 ## Build
 
 ```bash
@@ -193,39 +241,6 @@ focus set focus 30
 ```bash
 focus stats
 ```
-
-### Google Calendar Integration
-
-`focus-cli` mendukung integrasi dua arah dengan Google Calendar untuk mencatat sesi fokus yang selesai dan mengimpor tugas dari kalender.
-
-Untuk mulai menggunakan fitur ini, Anda perlu membuat kredensial API Google Anda sendiri secara mandiri. Silakan baca **[Panduan Setup Google Calendar](docs/gcal-setup.md)** untuk langkah penyiapan detailnya.
-
-#### CLI Command
-Setelah setup kredensial selesai:
-
-1. **Login & Otentikasi**:
-   ```bash
-   focus gcal login
-   ```
-2. **Cek Status Koneksi**:
-   ```bash
-   focus gcal status
-   ```
-3. **Aktifkan Fitur**:
-   ```bash
-   focus config set --gcal-enabled on
-   ```
-4. **Sinkronisasi Tugas**:
-   ```bash
-   focus gcal sync
-   ```
-5. **Logout**:
-   ```bash
-   focus gcal logout
-   ```
-
-#### Mode TUI
-Saat integrasi GCal aktif (`gcal-enabled=true`), dashboard interaktif TUI akan secara otomatis mengimpor tugas baru dari kalender Google Anda pada saat startup. Anda juga dapat menekan tombol **`r`** (refresh) di dashboard untuk memicu sinkronisasi ulang tugas secara asinkron di background tanpa membekukan tampilan UI.
 
 ## Lokasi Data
 
