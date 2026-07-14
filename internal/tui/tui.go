@@ -394,6 +394,17 @@ func (m *Model) handleEnginePhaseComplete(msg enginePhaseCompleteMsg) (tea.Model
 						m.tasks.Tasks[i].TimerSessionIndex = 0
 						m.tasks.Tasks[i].TimerTotalSessions = 0
 						isTaskComplete = true
+
+						// Update GCal event title asynchronously if GCal is enabled
+						if m.config.GCalEnabled && m.tasks.Tasks[i].GCalEventID != "" {
+							go func(eventID string) {
+								client, err := gcal.NewClient(m.store)
+								if err != nil {
+									return
+								}
+								_ = client.MarkEventAsDone(context.Background(), eventID, m.config.GCalCalendarName)
+							}(m.tasks.Tasks[i].GCalEventID)
+						}
 					}
 					m.tasks.Tasks[i].UpdatedAt = time.Now()
 					break
@@ -1027,6 +1038,9 @@ func (m *Model) deleteTask(id int) {
 	out := m.tasks.Tasks[:0]
 	for _, task := range m.tasks.Tasks {
 		if task.ID == id {
+			if task.GCalEventID != "" {
+				m.tasks.DeletedGCalEventIDs = append(m.tasks.DeletedGCalEventIDs, task.GCalEventID)
+			}
 			continue
 		}
 		out = append(out, task)
@@ -1052,6 +1066,15 @@ func (m *Model) toggleTask(id int) {
 			_ = m.store.SaveTasks(m.tasks)
 			if m.tasks.Tasks[i].Done {
 				m.status = fmt.Sprintf("Yeay! Task '%s' ditandai selesai.", m.tasks.Tasks[i].Title)
+				if m.config.GCalEnabled && m.tasks.Tasks[i].GCalEventID != "" {
+					go func(eventID string) {
+						client, err := gcal.NewClient(m.store)
+						if err != nil {
+							return
+						}
+						_ = client.MarkEventAsDone(context.Background(), eventID, m.config.GCalCalendarName)
+					}(m.tasks.Tasks[i].GCalEventID)
+				}
 			} else {
 				m.status = fmt.Sprintf("Task '%s' dibuka lagi. Lanjutkan, kamu pasti bisa!", m.tasks.Tasks[i].Title)
 			}

@@ -285,3 +285,48 @@ func (c *Client) UpdateEventTitle(ctx context.Context, eventID, newTitle string,
 	return nil
 }
 
+// MarkEventAsDone menandai event Google Calendar selesai dengan menambahkan awalan [Done]
+func (c *Client) MarkEventAsDone(ctx context.Context, eventID string, calendarName string) error {
+	srv, err := c.GetCalendarService(ctx)
+	if err != nil {
+		return fmt.Errorf("mendapatkan service GCal gagal: %w", err)
+	}
+	return c.MarkEventAsDoneWithService(ctx, srv, eventID, calendarName)
+}
+
+// MarkEventAsDoneWithService menandai event Google Calendar selesai dengan menambahkan awalan [Done] menggunakan service yang diberikan
+func (c *Client) MarkEventAsDoneWithService(ctx context.Context, srv *calendar.Service, eventID string, calendarName string) error {
+	// 1. Temukan kalender berdasarkan nama
+	var calendarID string
+	listCall := srv.CalendarList.List()
+	list, err := listCall.Do()
+	if err == nil {
+		for _, entry := range list.Items {
+			if entry.Summary == calendarName {
+				calendarID = entry.Id
+				break
+			}
+		}
+	}
+	if calendarID == "" {
+		calendarID = "primary"
+	}
+
+	// 2. Dapatkan event saat ini
+	event, err := srv.Events.Get(calendarID, eventID).Do()
+	if err != nil {
+		return fmt.Errorf("mengambil event GCal gagal: %w", err)
+	}
+
+	// 3. Tambahkan awalan [Done] jika belum ada
+	if !strings.HasPrefix(strings.ToLower(event.Summary), "[done]") && !strings.HasPrefix(strings.ToLower(event.Summary), "[selesai]") {
+		event.Summary = "[Done] " + event.Summary
+		_, err = srv.Events.Update(calendarID, eventID, event).Do()
+		if err != nil {
+			return fmt.Errorf("memperbarui event GCal gagal: %w", err)
+		}
+	}
+
+	return nil
+}
+

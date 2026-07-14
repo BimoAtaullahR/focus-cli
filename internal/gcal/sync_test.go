@@ -285,3 +285,95 @@ func TestImportTasks(t *testing.T) {
 	}
 }
 
+func TestMarkEventAsDone(t *testing.T) {
+	var eventFetched bool
+	var eventUpdated bool
+	var newSummary string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		// Mock GET calendar list
+		if r.Method == "GET" && r.URL.Path == "/users/me/calendarList" {
+			list := calendar.CalendarList{
+				Items: []*calendar.CalendarListEntry{
+					{
+						Id:      "focus-sessions-cal-id",
+						Summary: "Focus Sessions",
+					},
+				},
+			}
+			json.NewEncoder(w).Encode(list)
+			return
+		}
+
+		// Mock GET event
+		if r.Method == "GET" && r.URL.Path == "/calendars/focus-sessions-cal-id/events/mock-event-id" {
+			eventFetched = true
+			event := calendar.Event{
+				Id:      "mock-event-id",
+				Summary: "[50/10] Tugas Pertama",
+			}
+			json.NewEncoder(w).Encode(event)
+			return
+		}
+
+		// Mock PUT update event
+		if r.Method == "PUT" && r.URL.Path == "/calendars/focus-sessions-cal-id/events/mock-event-id" {
+			eventUpdated = true
+			var event calendar.Event
+			json.NewDecoder(r.Body).Decode(&event)
+			newSummary = event.Summary
+			json.NewEncoder(w).Encode(event)
+			return
+		}
+
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	// Initialize Storage
+	cfgHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfgHome)
+	store, err := storage.NewStore()
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+
+	// Initialize Client with custom mock service
+	client := &Client{
+		store: store,
+		oauthConfig: &oauth2.Config{
+			ClientID:     "mock-client",
+			ClientSecret: "mock-secret",
+			Endpoint: oauth2.Endpoint{
+				AuthURL:  server.URL + "/auth",
+				TokenURL: server.URL + "/token",
+			},
+		},
+	}
+
+	ctx := context.Background()
+	srv, err := calendar.NewService(ctx, option.WithEndpoint(server.URL), option.WithHTTPClient(http.DefaultClient))
+	if err != nil {
+		t.Fatalf("failed to create mock calendar service: %v", err)
+	}
+
+	err = client.MarkEventAsDoneWithService(ctx, srv, "mock-event-id", "Focus Sessions")
+	if err != nil {
+		t.Fatalf("MarkEventAsDoneWithService() error = %v", err)
+	}
+
+	if !eventFetched {
+		t.Errorf("expected event fetch request to be made")
+	}
+
+	if !eventUpdated {
+		t.Errorf("expected event update request to be made")
+	}
+
+	if newSummary != "[Done] [50/10] Tugas Pertama" {
+		t.Errorf("expected summary '[Done] [50/10] Tugas Pertama', got '%s'", newSummary)
+	}
+}
+

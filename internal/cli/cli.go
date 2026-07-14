@@ -334,6 +334,9 @@ func runTask(store *storage.Store, args []string) error {
 		for _, t := range ts.Tasks {
 			if t.ID == id {
 				deleted = true
+				if t.GCalEventID != "" {
+					ts.DeletedGCalEventIDs = append(ts.DeletedGCalEventIDs, t.GCalEventID)
+				}
 				continue
 			}
 			out = append(out, t)
@@ -368,6 +371,20 @@ func runTask(store *storage.Store, args []string) error {
 					ts.Tasks[i].TimerRemainingSec = 0
 					ts.Tasks[i].TimerSessionIndex = 0
 					ts.Tasks[i].TimerTotalSessions = 0
+
+					// Update GCal event title asynchronously if GCal is enabled
+					cfg, errCfg := store.LoadConfig()
+					if errCfg == nil && cfg.GCalEnabled && ts.Tasks[i].GCalEventID != "" {
+						go func(eventID, calendarName string) {
+							client, err := gcal.NewClient(store)
+							if err != nil {
+								return
+							}
+							ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+							defer cancel()
+							_ = client.MarkEventAsDone(ctx, eventID, calendarName)
+						}(ts.Tasks[i].GCalEventID, cfg.GCalCalendarName)
+					}
 				}
 				ts.Tasks[i].UpdatedAt = now
 				if err := store.SaveTasks(ts); err != nil {
@@ -874,6 +891,19 @@ func runPomodoro(store *storage.Store, args []string) error {
 									TaskID:     *taskID,
 									Message:    "Semua sesi task selesai.",
 								})
+
+								// Update GCal event title asynchronously if GCal is enabled
+								if cfg.GCalEnabled && ts.Tasks[ti].GCalEventID != "" {
+									go func(eventID, calendarName string) {
+										client, err := gcal.NewClient(store)
+										if err != nil {
+											return
+										}
+										ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+										defer cancel()
+										_ = client.MarkEventAsDone(ctx, eventID, calendarName)
+									}(ts.Tasks[ti].GCalEventID, cfg.GCalCalendarName)
+								}
 							}
 						}
 					}
