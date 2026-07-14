@@ -785,12 +785,35 @@ func runPomodoro(store *storage.Store, args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	focusDur := time.Duration(cfg.FocusMinutes) * time.Minute
+	breakDur := time.Duration(cfg.ShortBreakMinutes) * time.Minute
+	targetSess := *sessions
+
+	if *taskID > 0 {
+		for _, t := range ts.Tasks {
+			if t.ID == *taskID {
+				if t.FocusDuration > 0 {
+					focusDur = time.Duration(t.FocusDuration) * time.Minute
+				}
+				if t.BreakDuration > 0 {
+					breakDur = time.Duration(t.BreakDuration) * time.Minute
+				}
+				if t.TargetSessions > 0 && *sessions == 1 {
+					remaining := t.TargetSessions - t.CompletedPomodoros
+					if remaining > 0 {
+						targetSess = remaining
+					}
+				}
+			}
+		}
+	}
+
 	engineCfg := pomodoro.EngineConfig{
-		FocusDuration:      time.Duration(cfg.FocusMinutes) * time.Minute,
-		ShortBreakDuration: time.Duration(cfg.ShortBreakMinutes) * time.Minute,
+		FocusDuration:      focusDur,
+		ShortBreakDuration: breakDur,
 		LongBreakDuration:  time.Duration(cfg.LongBreakMinutes) * time.Minute,
 		LongBreakEvery:     cfg.LongBreakEvery,
-		TargetSessions:     *sessions,
+		TargetSessions:     targetSess,
 		WarningDuration:    time.Duration(cfg.Notifications.WarningMinutesBefore) * time.Minute,
 		TickInterval:       time.Second,
 	}

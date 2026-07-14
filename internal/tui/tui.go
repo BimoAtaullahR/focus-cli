@@ -486,9 +486,26 @@ func (m *Model) beginFocusCycle(taskID, totalSessions int) (tea.Model, tea.Cmd) 
 		totalSessions = 1
 	}
 
+	focusDur := time.Duration(m.config.FocusMinutes) * time.Minute
+	breakDur := time.Duration(m.config.ShortBreakMinutes) * time.Minute
+
+	if taskID > 0 {
+		for _, t := range m.tasks.Tasks {
+			if t.ID == taskID {
+				if t.FocusDuration > 0 {
+					focusDur = time.Duration(t.FocusDuration) * time.Minute
+				}
+				if t.BreakDuration > 0 {
+					breakDur = time.Duration(t.BreakDuration) * time.Minute
+				}
+				break
+			}
+		}
+	}
+
 	engineCfg := pomodoro.EngineConfig{
-		FocusDuration:      time.Duration(m.config.FocusMinutes) * time.Minute,
-		ShortBreakDuration: time.Duration(m.config.ShortBreakMinutes) * time.Minute,
+		FocusDuration:      focusDur,
+		ShortBreakDuration: breakDur,
 		LongBreakDuration:  time.Duration(m.config.LongBreakMinutes) * time.Minute,
 		LongBreakEvery:     m.config.LongBreakEvery,
 		TargetSessions:     totalSessions,
@@ -1158,9 +1175,18 @@ func (m *Model) startSelectedCycle() (tea.Model, tea.Cmd) {
 				pPhase = pomodoro.PhaseFocus
 			}
 
+			focusDur := time.Duration(m.config.FocusMinutes) * time.Minute
+			breakDur := time.Duration(m.config.ShortBreakMinutes) * time.Minute
+			if task.FocusDuration > 0 {
+				focusDur = time.Duration(task.FocusDuration) * time.Minute
+			}
+			if task.BreakDuration > 0 {
+				breakDur = time.Duration(task.BreakDuration) * time.Minute
+			}
+
 			engineCfg := pomodoro.EngineConfig{
-				FocusDuration:      time.Duration(m.config.FocusMinutes) * time.Minute,
-				ShortBreakDuration: time.Duration(m.config.ShortBreakMinutes) * time.Minute,
+				FocusDuration:      focusDur,
+				ShortBreakDuration: breakDur,
 				LongBreakDuration:  time.Duration(m.config.LongBreakMinutes) * time.Minute,
 				LongBreakEvery:     m.config.LongBreakEvery,
 				TargetSessions:     total,

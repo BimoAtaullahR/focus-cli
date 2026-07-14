@@ -308,3 +308,41 @@ func TestTaskResumeLabel(t *testing.T) {
 		t.Fatalf("taskResumeLabel(empty) = %q, want empty", got)
 	}
 }
+
+func TestTUI_BeginFocusCycleWithCustomDurations(t *testing.T) {
+	m := newTestModel(t)
+	
+	// Task 1: No custom durations set (FocusDuration=0, BreakDuration=0).
+	// Expect it to use config default values: Focus=25m, Break=5m.
+	_, _ = m.beginFocusCycle(1, 1)
+	if m.engine == nil {
+		t.Fatal("engine should be initialized")
+	}
+	if got, want := m.engine.Config().FocusDuration, 25*time.Minute; got != want {
+		t.Errorf("FocusDuration = %v, want %v", got, want)
+	}
+	if got, want := m.engine.Config().ShortBreakDuration, 5*time.Minute; got != want {
+		t.Errorf("ShortBreakDuration = %v, want %v", got, want)
+	}
+	m.engineCancel()
+
+	// Task 4: Let's add a task with custom durations FocusDuration=45, BreakDuration=15.
+	m.tasks.Tasks = append(m.tasks.Tasks, model.Task{
+		ID:            4,
+		Title:         "Task Custom",
+		FocusDuration: 45,
+		BreakDuration: 15,
+	})
+
+	_, _ = m.beginFocusCycle(4, 1)
+	if m.engine == nil {
+		t.Fatal("engine should be initialized")
+	}
+	if got, want := m.engine.Config().FocusDuration, 45*time.Minute; got != want {
+		t.Errorf("FocusDuration = %v, want %v", got, want)
+	}
+	if got, want := m.engine.Config().ShortBreakDuration, 15*time.Minute; got != want {
+		t.Errorf("ShortBreakDuration = %v, want %v", got, want)
+	}
+	m.engineCancel()
+}

@@ -271,3 +271,9 @@ func (e *SessionEngine) State() EngineState {
 	defer e.mu.Unlock()
 	return e.state
 }
+
+func (e *SessionEngine) Config() EngineConfig {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.config
+}
