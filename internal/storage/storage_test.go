@@ -4,6 +4,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
+
+	"focus-cli/internal/model"
 )
 
 func TestStoreRoundTrip(t *testing.T) {
@@ -116,6 +119,63 @@ func TestStoreGCal(t *testing.T) {
 	}
 	if string(loadedCreds) != credentialsJSON {
 		t.Errorf("expected credentials '%s', got '%s'", credentialsJSON, string(loadedCreds))
+	}
+}
+
+func TestTaskStoreRoundTrip(t *testing.T) {
+	cfgHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfgHome)
+
+	s, err := NewStore()
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+
+	importTime := time.Now().Round(time.Second)
+
+	// Save task store with custom fields
+	ts := model.TaskStore{
+		NextID: 2,
+		Tasks: []model.Task{
+			{
+				ID:             1,
+				Title:          "Custom Task",
+				FocusDuration:  45,
+				BreakDuration:  10,
+				GCalEventID:    "event-123",
+				TargetSessions: 2,
+				CreatedAt:      importTime,
+				UpdatedAt:      importTime,
+			},
+		},
+		DeletedGCalEventIDs: []string{"deleted-event-1", "deleted-event-2"},
+	}
+
+	err = s.SaveTasks(ts)
+	if err != nil {
+		t.Fatalf("SaveTasks() error = %v", err)
+	}
+
+	loadedTS, err := s.LoadTasks()
+	if err != nil {
+		t.Fatalf("LoadTasks() error = %v", err)
+	}
+
+	if loadedTS.NextID != 2 {
+		t.Errorf("expected NextID 2, got %d", loadedTS.NextID)
+	}
+
+	if len(loadedTS.Tasks) != 1 {
+		t.Fatalf("expected 1 task, got %d", len(loadedTS.Tasks))
+	}
+
+	task := loadedTS.Tasks[0]
+	if task.Title != "Custom Task" || task.FocusDuration != 45 || task.BreakDuration != 10 || task.GCalEventID != "event-123" {
+		t.Errorf("unexpected task loaded: %+v", task)
+	}
+
+	if len(loadedTS.DeletedGCalEventIDs) != 2 || loadedTS.DeletedGCalEventIDs[0] != "deleted-event-1" || loadedTS.DeletedGCalEventIDs[1] != "deleted-event-2" {
+		t.Errorf("unexpected DeletedGCalEventIDs loaded: %v", loadedTS.DeletedGCalEventIDs)
 	}
 }
 

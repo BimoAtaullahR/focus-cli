@@ -6,8 +6,14 @@ Mengintegrasikan `focus-cli` dengan Google Calendar untuk mempermudah manajemen 
 ### User Stories / Fitur Utama:
 1. **Otentikasi OAuth2**: Pengguna dapat masuk (`login`) dan keluar (`logout`) dari Google Calendar langsung dari CLI.
 2. **Auto-Sync Completed Sessions (Time Tracking)**: Setiap kali sesi fokus pomodoro selesai, aplikasi secara otomatis mencatatnya sebagai event di Google Calendar (misal: `Focus: [Judul Task]`).
-3. **Import Tasks dari Google Calendar**: Pengguna dapat mengambil daftar event dari kalender tertentu (misal: kalender "Focus Tasks" atau event dengan prefix `[Focus]`) dan mengubahnya menjadi task lokal di `focus-cli`.
-4. **Offline Resilience**: Jika tidak ada koneksi internet, aplikasi tidak boleh crash dan harus terus berfungsi secara lokal seperti biasa, dengan opsi sync ulang saat online.
+3. **Import & Parse Tasks dari Google Calendar**: Pengguna dapat mengimpor tugas dari Google Calendar khusus (misal "Focus Sessions") ke daftar tugas lokal. Aplikasi secara cerdas memproses judul event GCal menggunakan konvensi penamaan:
+   - Format `[FocusDuration/BreakDuration] Nama Tugas` (misal `[50/10] Tugas Deep Work`): Mengatur durasi fokus (50 menit) & break (10 menit) khusus untuk tugas tersebut, dan mengkalkulasi target sesi dari `durasi_event / (Focus + Break)`.
+   - Format `[N] Nama Tugas` (misal `[4] Belajar Go`): Menyetel jumlah target sesi menjadi `N` dengan durasi fokus/break default global.
+   - Tanpa prefix di atas: Menghitung target sesi dari `durasi_event / durasi_fokus_global`.
+   - Mengabaikan event riwayat fokus selesai (yang diawali dengan `Focus:` atau `[Done]`).
+4. **Marking Done in GCal**: Ketika tugas ditandai selesai (`Done = true`) di `focus-cli`, judul event terkait di Google Calendar diperbarui secara asinkron dengan menambahkan awalan `[Done]` di depannya (misal: `[Done] [50/10] Tugas Deep Work`).
+5. **Prevent Duplicate Imports**: Aplikasi mengingat ID event GCal dari tugas yang dihapus secara lokal agar tugas tersebut tidak terimpor ulang di sinkronisasi berikutnya.
+6. **Offline Resilience**: Jika tidak ada koneksi internet, aplikasi tidak boleh crash dan harus terus berfungsi secara lokal seperti biasa, dengan opsi sync ulang saat online.
 
 ---
 
@@ -124,7 +130,9 @@ func (c *GCalClient) SyncSession(ctx context.Context, title string, startTime, e
 ## Success Criteria
 - [ ] Pengguna bisa login menggunakan browser via local callback server `http://localhost:8080/callback`.
 - [ ] Setiap kali sesi fokus selesai, event tercatat di Google Calendar dalam waktu kurang dari 5 detik (apabila koneksi lancar).
-- [ ] Task yang diimport dari Google Calendar masuk ke daftar task lokal di `focus-cli`.
+- [ ] Task yang diimport dari Google Calendar masuk ke daftar task lokal di `focus-cli` dengan target sesi dan durasi kustom (Focus/Break) yang terurai secara tepat.
+- [ ] Menandai tugas sebagai selesai (`Done = true`) di `focus-cli` memperbarui judul event asli di Google Calendar dengan menambahkan awalan `[Done]` di depannya secara asinkron.
+- [ ] Tugas yang dihapus secara lokal di `focus-cli` tidak terimpor kembali saat sinkronisasi berikutnya (menggunakan daftar ID terhapus).
 - [ ] Aplikasi tetap berjalan lancar tanpa internet (tidak crash, melainkan menampilkan warning status offline di TUI).
 
 ---

@@ -16,11 +16,14 @@ type Task struct {
 	CreatedAt          time.Time `json:"created_at"`
 	UpdatedAt          time.Time `json:"updated_at"`
 	GCalEventID        string    `json:"gcal_event_id,omitempty"`
+	FocusDuration      int       `json:"focus_duration,omitempty"`
+	BreakDuration      int       `json:"break_duration,omitempty"`
 }
 
 type TaskStore struct {
-	NextID int    `json:"next_id"`
-	Tasks  []Task `json:"tasks"`
+	NextID              int      `json:"next_id"`
+	Tasks               []Task   `json:"tasks"`
+	DeletedGCalEventIDs []string `json:"deleted_gcal_event_ids,omitempty"`
 }
 
 type Config struct {
