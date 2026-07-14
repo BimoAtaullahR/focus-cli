@@ -3,12 +3,45 @@ package gcal
 import (
 	"context"
 	"fmt"
+	"regexp"
+	"strconv"
+	"strings"
 	"time"
 
 	"focus-cli/internal/model"
 
 	"google.golang.org/api/calendar/v3"
 )
+
+// parseGCalTitle mengurai judul event Google Calendar untuk mengekstrak target sesi dan durasi kustom
+func parseGCalTitle(summary string) (cleanTitle string, targetSessions int, focusDuration int, breakDuration int, skip bool) {
+	summary = strings.TrimSpace(summary)
+
+	// Abaikan event riwayat fokus selesai atau event yang sudah bertanda done
+	if strings.HasPrefix(summary, "Focus:") || strings.HasPrefix(summary, "Focus :") ||
+		strings.HasPrefix(strings.ToLower(summary), "[done]") || strings.HasPrefix(strings.ToLower(summary), "[selesai]") {
+		return "", 0, 0, 0, true
+	}
+
+	// Pola 1: [Focus/Break] Judul (misal: "[50/10] Implementasi GCal")
+	reDur := regexp.MustCompile(`^\[(\d+)\/(\d+)\]\s*(.+)$`)
+	if matches := reDur.FindStringSubmatch(summary); len(matches) == 4 {
+		focus, _ := strconv.Atoi(matches[1])
+		brk, _ := strconv.Atoi(matches[2])
+		title := strings.TrimSpace(matches[3])
+		return title, 0, focus, brk, false
+	}
+
+	// Pola 2: [N] Judul (misal: "[4] Belajar Go")
+	reSess := regexp.MustCompile(`^\[(\d+)\]\s*(.+)$`)
+	if matches := reSess.FindStringSubmatch(summary); len(matches) == 3 {
+		sess, _ := strconv.Atoi(matches[1])
+		title := strings.TrimSpace(matches[2])
+		return title, sess, 0, 0, false
+	}
+
+	return summary, 0, 0, 0, false
+}
 
 // SyncSessionEventWithService menyinkronkan sesi fokus ke Google Calendar menggunakan service yang diberikan
 func (c *Client) SyncSessionEventWithService(ctx context.Context, srv *calendar.Service, title string, startTime, endTime time.Time, calendarName string) (string, error) {
@@ -109,10 +142,72 @@ func (c *Client) ImportTasksWithService(ctx context.Context, srv *calendar.Servi
 		return nil, fmt.Errorf("mengambil event kalender gagal: %w", err)
 	}
 
+	// Load task store to check DeletedGCalEventIDs
+	var deletedIDs []string
+	if ts, err := c.store.LoadTasks(); err == nil {
+		deletedIDs = ts.DeletedGCalEventIDs
+	}
+
 	var tasks []model.Task
 	for _, item := range events.Items {
 		if item.Summary == "" {
 			continue
+		}
+
+		// Saring tugas yang sudah pernah dihapus lokal
+		isDeleted := false
+		for _, delID := range deletedIDs {
+			if delID == item.Id {
+				isDeleted = true
+				break
+			}
+		}
+		if isDeleted {
+			continue
+		}
+
+		// Urai template judul tugas
+		cleanTitle, targetSessions, focusDur, breakDur, skip := parseGCalTitle(item.Summary)
+		if skip {
+			continue
+		}
+
+		// Hitung durasi event untuk kalkulasi target sesi
+		var eventDuration time.Duration
+		if item.Start != nil && item.End != nil {
+			var start, end time.Time
+			var errStart, errEnd error
+			if item.Start.DateTime != "" {
+				start, errStart = time.Parse(time.RFC3339, item.Start.DateTime)
+			}
+			if item.End.DateTime != "" {
+				end, errEnd = time.Parse(time.RFC3339, item.End.DateTime)
+			}
+			if errStart == nil && errEnd == nil && !start.IsZero() && !end.IsZero() {
+				eventDuration = end.Sub(start)
+			}
+		}
+
+		// Jika TargetSessions belum diisi lewat template [N], kalkulasi dari durasi
+		if targetSessions <= 0 {
+			cfg, err := c.store.LoadConfig()
+			focusMin := 25
+			if err == nil && cfg.FocusMinutes > 0 {
+				focusMin = cfg.FocusMinutes
+			}
+
+			if focusDur > 0 {
+				cycleMin := focusDur + breakDur
+				if cycleMin > 0 {
+					targetSessions = int(eventDuration.Minutes() / float64(cycleMin))
+				}
+			} else {
+				targetSessions = int(eventDuration.Minutes() / float64(focusMin))
+			}
+
+			if targetSessions < 1 {
+				targetSessions = 1
+			}
 		}
 
 		createdAt := time.Now()
@@ -130,10 +225,12 @@ func (c *Client) ImportTasksWithService(ctx context.Context, srv *calendar.Servi
 		}
 
 		task := model.Task{
-			Title:          item.Summary,
+			Title:          cleanTitle,
 			Description:    item.Description,
 			Done:           false,
-			TargetSessions: 1,
+			TargetSessions: targetSessions,
+			FocusDuration:  focusDur,
+			BreakDuration:  breakDur,
 			CreatedAt:      createdAt,
 			UpdatedAt:      updatedAt,
 			GCalEventID:    item.Id,
@@ -151,5 +248,40 @@ func (c *Client) ImportTasks(ctx context.Context, calendarName string) ([]model.
 		return nil, err
 	}
 	return c.ImportTasksWithService(ctx, srv, calendarName)
+}
+
+// UpdateEventTitle memperbarui judul event Google Calendar secara asinkron
+func (c *Client) UpdateEventTitle(ctx context.Context, eventID, newTitle string, calendarName string) error {
+	srv, err := c.GetCalendarService(ctx)
+	if err != nil {
+		return fmt.Errorf("mendapatkan service GCal gagal: %w", err)
+	}
+
+	// 1. Temukan kalender berdasarkan nama
+	var calendarID string
+	listCall := srv.CalendarList.List()
+	list, err := listCall.Do()
+	if err == nil {
+		for _, entry := range list.Items {
+			if entry.Summary == calendarName {
+				calendarID = entry.Id
+				break
+			}
+		}
+	}
+	if calendarID == "" {
+		calendarID = "primary"
+	}
+
+	// 2. Patch judul event
+	event := &calendar.Event{
+		Summary: newTitle,
+	}
+	_, err = srv.Events.Patch(calendarID, eventID, event).Do()
+	if err != nil {
+		return fmt.Errorf("update event GCal gagal: %w", err)
+	}
+
+	return nil
 }
 

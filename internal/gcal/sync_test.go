@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"focus-cli/internal/model"
 	"focus-cli/internal/storage"
 
 	"golang.org/x/oauth2"
@@ -115,6 +116,7 @@ func TestSyncSessionEvent(t *testing.T) {
 }
 
 func TestImportTasks(t *testing.T) {
+	now := time.Now().Truncate(time.Second)
 	// Setup mock Google Calendar API server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -141,15 +143,68 @@ func TestImportTasks(t *testing.T) {
 						Id:          "event-1",
 						Summary:     "Tugas Pertama",
 						Description: "Deskripsi Tugas Pertama",
-						Created:     time.Now().Format(time.RFC3339),
-						Updated:     time.Now().Format(time.RFC3339),
+						Created:     now.Format(time.RFC3339),
+						Updated:     now.Format(time.RFC3339),
+						Start: &calendar.EventDateTime{
+							DateTime: now.Format(time.RFC3339),
+						},
+						End: &calendar.EventDateTime{
+							DateTime: now.Add(60 * time.Minute).Format(time.RFC3339),
+						},
 					},
 					{
 						Id:          "event-2",
 						Summary:     "Tugas Kedua",
 						Description: "",
-						Created:     time.Now().Format(time.RFC3339),
-						Updated:     time.Now().Format(time.RFC3339),
+						Created:     now.Format(time.RFC3339),
+						Updated:     now.Format(time.RFC3339),
+						Start: &calendar.EventDateTime{
+							DateTime: now.Format(time.RFC3339),
+						},
+						End: &calendar.EventDateTime{
+							DateTime: now.Add(30 * time.Minute).Format(time.RFC3339),
+						},
+					},
+					{
+						Id:          "event-3",
+						Summary:     "[50/10] Tugas Kustom",
+						Description: "Custom durations",
+						Created:     now.Format(time.RFC3339),
+						Updated:     now.Format(time.RFC3339),
+						Start: &calendar.EventDateTime{
+							DateTime: now.Format(time.RFC3339),
+						},
+						End: &calendar.EventDateTime{
+							DateTime: now.Add(120 * time.Minute).Format(time.RFC3339),
+						},
+					},
+					{
+						Id:          "event-4",
+						Summary:     "[4] Tugas Sesi",
+						Description: "Explicit target sessions",
+						Created:     now.Format(time.RFC3339),
+						Updated:     now.Format(time.RFC3339),
+						Start: &calendar.EventDateTime{
+							DateTime: now.Format(time.RFC3339),
+						},
+						End: &calendar.EventDateTime{
+							DateTime: now.Add(30 * time.Minute).Format(time.RFC3339),
+						},
+					},
+					{
+						Id:          "event-5",
+						Summary:     "[Done] [3] Tugas Selesai",
+						Description: "Should be skipped",
+					},
+					{
+						Id:          "event-6",
+						Summary:     "Focus: Sesi Selesai",
+						Description: "Should be skipped",
+					},
+					{
+						Id:          "event-deleted",
+						Summary:     "Tugas Dihapus Lokal",
+						Description: "Should be skipped",
 					},
 				},
 			}
@@ -168,6 +223,14 @@ func TestImportTasks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create store: %v", err)
 	}
+
+	// Save task store with "event-deleted" in DeletedGCalEventIDs to mock local deletion
+	ts := model.TaskStore{
+		NextID:              1,
+		Tasks:               []model.Task{},
+		DeletedGCalEventIDs: []string{"event-deleted"},
+	}
+	_ = store.SaveTasks(ts)
 
 	// Initialize Client with custom mock service
 	client := &Client{
@@ -193,16 +256,32 @@ func TestImportTasks(t *testing.T) {
 		t.Fatalf("ImportTasksWithService() error = %v", err)
 	}
 
-	if len(tasks) != 2 {
-		t.Fatalf("expected 2 tasks imported, got %d", len(tasks))
+	// We expect exactly 4 tasks to be imported (event-1, event-2, event-3, event-4)
+	// event-5 is skipped because it starts with [Done]
+	// event-6 is skipped because it starts with Focus:
+	// event-deleted is skipped because its ID is in DeletedGCalEventIDs
+	if len(tasks) != 4 {
+		t.Fatalf("expected 4 tasks imported, got %d", len(tasks))
 	}
 
-	if tasks[0].Title != "Tugas Pertama" || tasks[0].GCalEventID != "event-1" || tasks[0].Description != "Deskripsi Tugas Pertama" {
+	// Task 1: "Tugas Pertama" -> Calculated sessions: 60 min / 25 min = 2 sessions
+	if tasks[0].Title != "Tugas Pertama" || tasks[0].TargetSessions != 2 || tasks[0].FocusDuration != 0 {
 		t.Errorf("unexpected task 0: %+v", tasks[0])
 	}
 
-	if tasks[1].Title != "Tugas Kedua" || tasks[1].GCalEventID != "event-2" || tasks[1].Description != "" {
+	// Task 2: "Tugas Kedua" -> Calculated sessions: 30 min / 25 min = 1 session
+	if tasks[1].Title != "Tugas Kedua" || tasks[1].TargetSessions != 1 {
 		t.Errorf("unexpected task 1: %+v", tasks[1])
+	}
+
+	// Task 3: "[50/10] Tugas Kustom" -> FocusDuration=50, BreakDuration=10, TargetSessions: 120 / 60 = 2 sessions
+	if tasks[2].Title != "Tugas Kustom" || tasks[2].TargetSessions != 2 || tasks[2].FocusDuration != 50 || tasks[2].BreakDuration != 10 {
+		t.Errorf("unexpected task 2: %+v", tasks[2])
+	}
+
+	// Task 4: "[4] Tugas Sesi" -> Explicit TargetSessions=4, FocusDuration=0, BreakDuration=0
+	if tasks[3].Title != "Tugas Sesi" || tasks[3].TargetSessions != 4 || tasks[3].FocusDuration != 0 {
+		t.Errorf("unexpected task 3: %+v", tasks[3])
 	}
 }
 
