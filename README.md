@@ -34,9 +34,8 @@ Pomodoro app berbasis terminal Linux, ditulis dengan Go (hasil dari vibe coding 
 
 2. **Dukungan Format Judul Kustom (Dinamis)**
    Anda dapat menulis detail sesi langsung di judul event Google Calendar dengan konvensi berikut:
-   - **`[Focus/Break] Nama Tugas`** (misal: `[50/10] Menulis Laporan`): Mengatur durasi fokus 50 menit dan break 10 menit. Jumlah target sesi pomodoro akan dihitung dinamis berdasarkan durasi event GCal.
-   - **`[N] Nama Tugas`** (misal: `[4] Belajar Go`): Mengatur target sesi pomodoro sebanyak `N` sesi secara eksplisit.
-   - **Penyaringan Pintar**: Event dengan judul berawalan `[Done]`, `[Selesai]`, atau `Focus:` akan otomatis diabaikan.
+   - **`[Focus/Break] Nama Tugas`** (misal: `[50/10] Menulis Laporan`) ATAU **`(Focus/Break) Nama Tugas`** (misal: `(25/5) Belajar Go`): Mengatur durasi fokus dan break secara kustom. Jumlah target sesi pomodoro akan dihitung secara dinamis berdasarkan durasi event GCal dibagi dengan total durasi siklus (Focus + Break).
+   - **Penyaringan Pintar**: Event dengan judul yang tidak diawali dengan salah satu format di atas (seperti format lama `[N]` atau tanpa format), atau event berawalan `[Done]`, `(Done)`, `[Selesai]`, `(Selesai)`, maupun `Focus:` akan otomatis diabaikan dan tidak diimpor.
 
 3. **Pembaruan Status Selesai Otomatis**
    Menandai tugas selesai secara lokal (di CLI maupun TUI) akan memicu pembaruan judul event di Google Calendar secara asinkron menjadi berawalan `[Done] ` (misal: `[Done] [50/10] Menulis Laporan`).

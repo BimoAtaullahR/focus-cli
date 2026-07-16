@@ -6,11 +6,10 @@ Mengintegrasikan `focus-cli` dengan Google Calendar untuk mempermudah manajemen 
 ### User Stories / Fitur Utama:
 1. **Otentikasi OAuth2**: Pengguna dapat masuk (`login`) dan keluar (`logout`) dari Google Calendar langsung dari CLI.
 2. **Auto-Sync Completed Sessions (Time Tracking)**: Setiap kali sesi fokus pomodoro selesai, aplikasi secara otomatis mencatatnya sebagai event di Google Calendar (misal: `Focus: [Judul Task]`).
-3. **Import & Parse Tasks dari Google Calendar**: Pengguna dapat mengimpor tugas dari Google Calendar khusus (misal "Focus Sessions") ke daftar tugas lokal. Aplikasi secara cerdas memproses judul event GCal menggunakan konvensi penamaan:
-   - Format `[FocusDuration/BreakDuration] Nama Tugas` (misal `[50/10] Tugas Deep Work`): Mengatur durasi fokus (50 menit) & break (10 menit) khusus untuk tugas tersebut, dan mengkalkulasi target sesi dari `durasi_event / (Focus + Break)`.
-   - Format `[N] Nama Tugas` (misal `[4] Belajar Go`): Menyetel jumlah target sesi menjadi `N` dengan durasi fokus/break default global.
-   - Tanpa prefix di atas: Menghitung target sesi dari `durasi_event / durasi_fokus_global`.
-   - Mengabaikan event riwayat fokus selesai (yang diawali dengan `Focus:` atau `[Done]`).
+3. **Import & Parse Tasks dari Google Calendar**: Pengguna dapat mengimpor tugas dari Google Calendar khusus (misal "Focus Sessions") ke daftar tugas lokal. Aplikasi secara cerdas memproses judul event GCal menggunakan konvensi penamaan berikut (event yang tidak sesuai format ini akan diabaikan):
+   - Format `[FocusDuration/BreakDuration] Nama Tugas` (misal `[50/10] Tugas Deep Work`) atau `(FocusDuration/BreakDuration) Nama Tugas` (misal `(25/5) Sesi Belajar`): Mengatur durasi fokus & break khusus untuk tugas tersebut, dan mengkalkulasi target sesi dari `durasi_event / (Focus + Break)`.
+   - Mengabaikan event riwayat fokus selesai (yang diawali dengan `Focus:`, `[Done]`, `[Selesai]`, `(Done)`, atau `(Selesai)`).
+   - Mengabaikan event yang tidak menggunakan format durasi di atas (termasuk format lama `[N]` dan event tanpa format).
 4. **Marking Done in GCal**: Ketika tugas ditandai selesai (`Done = true`) di `focus-cli`, judul event terkait di Google Calendar diperbarui secara asinkron dengan menambahkan awalan `[Done]` di depannya (misal: `[Done] [50/10] Tugas Deep Work`).
 5. **Prevent Duplicate Imports**: Aplikasi mengingat ID event GCal dari tugas yang dihapus secara lokal agar tugas tersebut tidak terimpor ulang di sinkronisasi berikutnya.
 6. **Offline Resilience**: Jika tidak ada koneksi internet, aplikasi tidak boleh crash dan harus terus berfungsi secara lokal seperti biasa, dengan opsi sync ulang saat online.

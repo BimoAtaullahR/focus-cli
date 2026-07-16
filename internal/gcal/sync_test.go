@@ -154,8 +154,8 @@ func TestImportTasks(t *testing.T) {
 					},
 					{
 						Id:          "event-2",
-						Summary:     "Tugas Kedua",
-						Description: "",
+						Summary:     "[4] Tugas Sesi",
+						Description: "Explicit target sessions",
 						Created:     now.Format(time.RFC3339),
 						Updated:     now.Format(time.RFC3339),
 						Start: &calendar.EventDateTime{
@@ -180,20 +180,20 @@ func TestImportTasks(t *testing.T) {
 					},
 					{
 						Id:          "event-4",
-						Summary:     "[4] Tugas Sesi",
-						Description: "Explicit target sessions",
+						Summary:     "(25/5) Tugas Parentheses",
+						Description: "Parentheses durations",
 						Created:     now.Format(time.RFC3339),
 						Updated:     now.Format(time.RFC3339),
 						Start: &calendar.EventDateTime{
 							DateTime: now.Format(time.RFC3339),
 						},
 						End: &calendar.EventDateTime{
-							DateTime: now.Add(30 * time.Minute).Format(time.RFC3339),
+							DateTime: now.Add(60 * time.Minute).Format(time.RFC3339),
 						},
 					},
 					{
 						Id:          "event-5",
-						Summary:     "[Done] [3] Tugas Selesai",
+						Summary:     "[Done] [50/10] Tugas Selesai",
 						Description: "Should be skipped",
 					},
 					{
@@ -203,7 +203,7 @@ func TestImportTasks(t *testing.T) {
 					},
 					{
 						Id:          "event-deleted",
-						Summary:     "Tugas Dihapus Lokal",
+						Summary:     "(25/5) Tugas Dihapus Lokal",
 						Description: "Should be skipped",
 					},
 				},
@@ -256,32 +256,24 @@ func TestImportTasks(t *testing.T) {
 		t.Fatalf("ImportTasksWithService() error = %v", err)
 	}
 
-	// We expect exactly 4 tasks to be imported (event-1, event-2, event-3, event-4)
+	// We expect exactly 2 tasks to be imported (event-3, event-4)
+	// event-1 is skipped because it has no custom duration format
+	// event-2 is skipped because it has [N] format (no longer supported)
 	// event-5 is skipped because it starts with [Done]
 	// event-6 is skipped because it starts with Focus:
 	// event-deleted is skipped because its ID is in DeletedGCalEventIDs
-	if len(tasks) != 4 {
-		t.Fatalf("expected 4 tasks imported, got %d", len(tasks))
+	if len(tasks) != 2 {
+		t.Fatalf("expected 2 tasks imported, got %d", len(tasks))
 	}
 
-	// Task 1: "Tugas Pertama" -> Calculated sessions: 60 min / 25 min = 2 sessions
-	if tasks[0].Title != "Tugas Pertama" || tasks[0].TargetSessions != 2 || tasks[0].FocusDuration != 0 {
+	// Task 1: "[50/10] Tugas Kustom" -> FocusDuration=50, BreakDuration=10, TargetSessions: 120 / 60 = 2 sessions
+	if tasks[0].Title != "Tugas Kustom" || tasks[0].TargetSessions != 2 || tasks[0].FocusDuration != 50 || tasks[0].BreakDuration != 10 {
 		t.Errorf("unexpected task 0: %+v", tasks[0])
 	}
 
-	// Task 2: "Tugas Kedua" -> Calculated sessions: 30 min / 25 min = 1 session
-	if tasks[1].Title != "Tugas Kedua" || tasks[1].TargetSessions != 1 {
+	// Task 2: "(25/5) Tugas Parentheses" -> FocusDuration=25, BreakDuration=5, TargetSessions: 60 / 30 = 2 sessions
+	if tasks[1].Title != "Tugas Parentheses" || tasks[1].TargetSessions != 2 || tasks[1].FocusDuration != 25 || tasks[1].BreakDuration != 5 {
 		t.Errorf("unexpected task 1: %+v", tasks[1])
-	}
-
-	// Task 3: "[50/10] Tugas Kustom" -> FocusDuration=50, BreakDuration=10, TargetSessions: 120 / 60 = 2 sessions
-	if tasks[2].Title != "Tugas Kustom" || tasks[2].TargetSessions != 2 || tasks[2].FocusDuration != 50 || tasks[2].BreakDuration != 10 {
-		t.Errorf("unexpected task 2: %+v", tasks[2])
-	}
-
-	// Task 4: "[4] Tugas Sesi" -> Explicit TargetSessions=4, FocusDuration=0, BreakDuration=0
-	if tasks[3].Title != "Tugas Sesi" || tasks[3].TargetSessions != 4 || tasks[3].FocusDuration != 0 {
-		t.Errorf("unexpected task 3: %+v", tasks[3])
 	}
 }
 

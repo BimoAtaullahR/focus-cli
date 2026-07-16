@@ -13,34 +13,39 @@ import (
 	"google.golang.org/api/calendar/v3"
 )
 
+var (
+	reDurSquare = regexp.MustCompile(`^\[(\d+)\/(\d+)\]\s*(.+)$`)
+	reDurParen  = regexp.MustCompile(`^\((\d+)\/(\d+)\)\s*(.+)$`)
+)
+
 // parseGCalTitle mengurai judul event Google Calendar untuk mengekstrak target sesi dan durasi kustom
 func parseGCalTitle(summary string) (cleanTitle string, targetSessions int, focusDuration int, breakDuration int, skip bool) {
 	summary = strings.TrimSpace(summary)
 
 	// Abaikan event riwayat fokus selesai atau event yang sudah bertanda done
 	if strings.HasPrefix(summary, "Focus:") || strings.HasPrefix(summary, "Focus :") ||
-		strings.HasPrefix(strings.ToLower(summary), "[done]") || strings.HasPrefix(strings.ToLower(summary), "[selesai]") {
+		strings.HasPrefix(strings.ToLower(summary), "[done]") || strings.HasPrefix(strings.ToLower(summary), "[selesai]") ||
+		strings.HasPrefix(strings.ToLower(summary), "(done)") || strings.HasPrefix(strings.ToLower(summary), "(selesai)") {
 		return "", 0, 0, 0, true
 	}
 
 	// Pola 1: [Focus/Break] Judul (misal: "[50/10] Implementasi GCal")
-	reDur := regexp.MustCompile(`^\[(\d+)\/(\d+)\]\s*(.+)$`)
-	if matches := reDur.FindStringSubmatch(summary); len(matches) == 4 {
+	if matches := reDurSquare.FindStringSubmatch(summary); len(matches) == 4 {
 		focus, _ := strconv.Atoi(matches[1])
 		brk, _ := strconv.Atoi(matches[2])
 		title := strings.TrimSpace(matches[3])
 		return title, 0, focus, brk, false
 	}
 
-	// Pola 2: [N] Judul (misal: "[4] Belajar Go")
-	reSess := regexp.MustCompile(`^\[(\d+)\]\s*(.+)$`)
-	if matches := reSess.FindStringSubmatch(summary); len(matches) == 3 {
-		sess, _ := strconv.Atoi(matches[1])
-		title := strings.TrimSpace(matches[2])
-		return title, sess, 0, 0, false
+	// Pola 2: (Focus/Break) Judul (misal: "(50/10) Implementasi GCal")
+	if matches := reDurParen.FindStringSubmatch(summary); len(matches) == 4 {
+		focus, _ := strconv.Atoi(matches[1])
+		brk, _ := strconv.Atoi(matches[2])
+		title := strings.TrimSpace(matches[3])
+		return title, 0, focus, brk, false
 	}
 
-	return summary, 0, 0, 0, false
+	return "", 0, 0, 0, true
 }
 
 // SyncSessionEventWithService menyinkronkan sesi fokus ke Google Calendar menggunakan service yang diberikan
