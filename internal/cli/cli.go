@@ -1084,7 +1084,7 @@ func runGCal(store *storage.Store, args []string) error {
 		}
 		cal, err := srv.Calendars.Get("primary").Do()
 		if err != nil {
-			fmt.Printf("GCal API Connectivity: Failed (%v)\n", err)
+			fmt.Printf("GCal API Connectivity: Failed (%v)\n", gcal.FormatGCalError(err))
 			return nil
 		}
 		fmt.Printf("GCal API Connectivity: Connected (Account: %s)\n", cal.Summary)
