@@ -46,7 +46,25 @@ func NewClient(store *storage.Store) (*Client, error) {
 	}, nil
 }
 
-// GetHTTPClient mengembalikan http.Client yang terotentikasi dan otomatis me-refresh token jika kadaluwarsa
+type persistingTokenSource struct {
+	src   oauth2.TokenSource
+	store *storage.Store
+}
+
+func (p *persistingTokenSource) Token() (*oauth2.Token, error) {
+	tok, err := p.src.Token()
+	if err != nil {
+		return nil, err
+	}
+	if tok.Valid() {
+		if data, jsonErr := json.Marshal(tok); jsonErr == nil {
+			_ = p.store.SaveGCalToken(data)
+		}
+	}
+	return tok, nil
+}
+
+// GetHTTPClient mengembalikan http.Client yang terotentikasi dan otomatis me-refresh token jika kadaluwarsa serta menyimpannya ke disk
 func (c *Client) GetHTTPClient(ctx context.Context) (*http.Client, error) {
 	tokenData, err := c.store.LoadGCalToken()
 	if err != nil {
@@ -58,7 +76,14 @@ func (c *Client) GetHTTPClient(ctx context.Context) (*http.Client, error) {
 		return nil, fmt.Errorf("parsing token GCal gagal: %w", err)
 	}
 
-	return c.oauthConfig.Client(ctx, &token), nil
+	ts := c.oauthConfig.TokenSource(ctx, &token)
+	pts := &persistingTokenSource{
+		src:   ts,
+		store: c.store,
+	}
+	reuseTs := oauth2.ReuseTokenSource(&token, pts)
+
+	return oauth2.NewClient(ctx, reuseTs), nil
 }
 
 // GetCalendarService mengembalikan Google Calendar Service
