@@ -2,11 +2,15 @@ package gcal
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"focus-cli/internal/storage"
+
+	"golang.org/x/oauth2"
 )
 
 func TestNewClientNoCredentials(t *testing.T) {
@@ -115,4 +119,60 @@ func TestGetHTTPClient(t *testing.T) {
 		t.Errorf("expected httpClient to not be nil")
 	}
 }
+
+type mockTokenSource struct {
+	token *oauth2.Token
+	err   error
+}
+
+func (m *mockTokenSource) Token() (*oauth2.Token, error) {
+	return m.token, m.err
+}
+
+func TestPersistingTokenSource(t *testing.T) {
+	cfgHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfgHome)
+
+	store, err := storage.NewStore()
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+
+	newToken := &oauth2.Token{
+		AccessToken:  "refreshed-access-token",
+		TokenType:    "Bearer",
+		RefreshToken: "refreshed-refresh-token",
+		Expiry:       time.Now().Add(1 * time.Hour),
+	}
+
+	mockSrc := &mockTokenSource{token: newToken}
+	pts := &persistingTokenSource{
+		src:   mockSrc,
+		store: store,
+	}
+
+	gotToken, err := pts.Token()
+	if err != nil {
+		t.Fatalf("pts.Token() error = %v", err)
+	}
+	if gotToken.AccessToken != "refreshed-access-token" {
+		t.Errorf("expected access token 'refreshed-access-token', got '%s'", gotToken.AccessToken)
+	}
+
+	// Verify that the new token was saved to store
+	savedBytes, err := store.LoadGCalToken()
+	if err != nil {
+		t.Fatalf("failed to load saved token: %v", err)
+	}
+
+	var savedToken oauth2.Token
+	if err := json.Unmarshal(savedBytes, &savedToken); err != nil {
+		t.Fatalf("failed to unmarshal saved token: %v", err)
+	}
+
+	if savedToken.AccessToken != "refreshed-access-token" {
+		t.Errorf("expected saved token AccessToken to be 'refreshed-access-token', got '%s'", savedToken.AccessToken)
+	}
+}
+
 

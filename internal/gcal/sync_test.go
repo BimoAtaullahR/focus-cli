@@ -3,8 +3,11 @@ package gcal
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -368,4 +371,35 @@ func TestMarkEventAsDone(t *testing.T) {
 		t.Errorf("expected summary '[Done] [50/10] Tugas Pertama', got '%s'", newSummary)
 	}
 }
+
+func TestFormatGCalError(t *testing.T) {
+	// 1. nil error
+	if err := FormatGCalError(nil); err != nil {
+		t.Errorf("expected nil for nil error, got %v", err)
+	}
+
+	// 2. Normal error
+	normalErr := errors.New("some standard network error")
+	if err := FormatGCalError(normalErr); err != normalErr {
+		t.Errorf("expected original error returned, got %v", err)
+	}
+
+	// 3. invalid_grant RetrieveError
+	retrieveErr := &oauth2.RetrieveError{
+		ErrorCode:        "invalid_grant",
+		ErrorDescription: "Token has been expired or revoked.",
+	}
+	formatted := FormatGCalError(retrieveErr)
+	if formatted == nil || !strings.Contains(formatted.Error(), "Token Google Calendar telah kadaluwarsa atau dicabut") {
+		t.Errorf("expected friendly invalid_grant message, got: %v", formatted)
+	}
+
+	// 4. Wrapped invalid_grant string error
+	wrappedErr := fmt.Errorf("mengambil list kalender gagal: oauth2: \"invalid_grant\" \"Token has been expired or revoked.\"")
+	formatted2 := FormatGCalError(wrappedErr)
+	if formatted2 == nil || !strings.Contains(formatted2.Error(), "Token Google Calendar telah kadaluwarsa atau dicabut") {
+		t.Errorf("expected friendly invalid_grant message, got: %v", formatted2)
+	}
+}
+
 

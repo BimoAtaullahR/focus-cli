@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os/exec"
 	"runtime"
+	"strings"
 	"time"
 
 	"focus-cli/internal/storage"
@@ -18,6 +19,32 @@ import (
 	"google.golang.org/api/calendar/v3"
 	"google.golang.org/api/option"
 )
+
+// IsInvalidGrantError memeriksa apakah error disebabkan oleh token OAuth2 yang kadaluwarsa atau dicabut
+func IsInvalidGrantError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var retrieveErr *oauth2.RetrieveError
+	if errors.As(err, &retrieveErr) {
+		if retrieveErr.ErrorCode == "invalid_grant" || strings.Contains(strings.ToLower(retrieveErr.ErrorDescription), "expired or revoked") {
+			return true
+		}
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "invalid_grant") || strings.Contains(msg, "expired or revoked")
+}
+
+// FormatGCalError mengonversi error GCal mentah menjadi pesan yang ramah pengguna
+func FormatGCalError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if IsInvalidGrantError(err) {
+		return errors.New("Token Google Calendar telah kadaluwarsa atau dicabut. Silakan jalankan 'focus gcal login' untuk otentikasi ulang akun Anda.")
+	}
+	return err
+}
 
 type Client struct {
 	store       *storage.Store
@@ -46,7 +73,25 @@ func NewClient(store *storage.Store) (*Client, error) {
 	}, nil
 }
 
-// GetHTTPClient mengembalikan http.Client yang terotentikasi dan otomatis me-refresh token jika kadaluwarsa
+type persistingTokenSource struct {
+	src   oauth2.TokenSource
+	store *storage.Store
+}
+
+func (p *persistingTokenSource) Token() (*oauth2.Token, error) {
+	tok, err := p.src.Token()
+	if err != nil {
+		return nil, err
+	}
+	if tok.Valid() {
+		if data, jsonErr := json.Marshal(tok); jsonErr == nil {
+			_ = p.store.SaveGCalToken(data)
+		}
+	}
+	return tok, nil
+}
+
+// GetHTTPClient mengembalikan http.Client yang terotentikasi dan otomatis me-refresh token jika kadaluwarsa serta menyimpannya ke disk
 func (c *Client) GetHTTPClient(ctx context.Context) (*http.Client, error) {
 	tokenData, err := c.store.LoadGCalToken()
 	if err != nil {
@@ -58,19 +103,26 @@ func (c *Client) GetHTTPClient(ctx context.Context) (*http.Client, error) {
 		return nil, fmt.Errorf("parsing token GCal gagal: %w", err)
 	}
 
-	return c.oauthConfig.Client(ctx, &token), nil
+	ts := c.oauthConfig.TokenSource(ctx, &token)
+	pts := &persistingTokenSource{
+		src:   ts,
+		store: c.store,
+	}
+	reuseTs := oauth2.ReuseTokenSource(&token, pts)
+
+	return oauth2.NewClient(ctx, reuseTs), nil
 }
 
 // GetCalendarService mengembalikan Google Calendar Service
 func (c *Client) GetCalendarService(ctx context.Context) (*calendar.Service, error) {
 	httpClient, err := c.GetHTTPClient(ctx)
 	if err != nil {
-		return nil, err
+		return nil, FormatGCalError(err)
 	}
 
 	srv, err := calendar.NewService(ctx, option.WithHTTPClient(httpClient))
 	if err != nil {
-		return nil, fmt.Errorf("membuat service GCal gagal: %w", err)
+		return nil, FormatGCalError(fmt.Errorf("membuat service GCal gagal: %w", err))
 	}
 
 	return srv, nil

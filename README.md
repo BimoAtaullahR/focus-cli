@@ -26,6 +26,8 @@ Pomodoro app berbasis terminal Linux, ditulis dengan Go (hasil dari vibe coding 
 
 > [!IMPORTANT]
 > Untuk mulai menggunakan fitur ini, Anda perlu membuat kredensial API Google Anda sendiri secara mandiri. Silakan baca panduan lengkap di **[Panduan Setup Google Calendar](docs/gcal-setup.md)**.
+> 
+> *Catatan Penting*: Pastikan status GCP OAuth Consent Screen diubah ke **In Production** (klik **Publish App**) agar Refresh Token tidak kedaluwarsa secara otomatis setelah 7 hari.
 
 ### Fitur Utama Integrasi GCal:
 

@@ -51,9 +51,12 @@ Sebelum membuat kredensial, Google mengharuskan Anda menentukan layar persetujua
    * Klik **Add Users**.
    * Masukkan alamat email Google yang akan Anda gunakan untuk mencatat sesi fokus.
    * Klik **Add** lalu klik **Save and Continue**.
-8. Tinjau ringkasan dan pastikan status Publishing status adalah **Testing**.
-
----
+54: 8. Tinjau ringkasan dan periksa status Publishing status.
+55: 9. **Ubah Publishing Status ke In Production (Penting)**:
+56:    * Secara bawaan, Publishing Status akan bernilai **Testing**. Pada mode *Testing*, Google secara otomatis membatasi umur Refresh Token hanya bertahan selama **7 hari** (setelah 7 hari token expired dan memicu error `invalid_grant`).
+57:    * Untuk penggunaan personal agar login berlaku permanen tanpa perlu login ulang tiap minggu, klik tombol **Publish App** pada halaman *OAuth consent screen* dan konfirmasi pemublikasian ke status **In Production**. (Aplikasi personal untuk penggunaan pribadi tidak memerlukan proses verifikasi resmi dari Google).
+58: 
+59: ---
 
 ## Langkah 4: Buat Kredensial OAuth Client ID
 
@@ -115,3 +118,9 @@ Berikut adalah beberapa kendala umum yang sering terjadi saat melakukan setup in
 * **Solusi**:
   1. Jalankan kembali perintah `focus gcal login`.
   2. Saat halaman persetujuan Google muncul di browser, pastikan Anda **mencentang semua kotak centang izin** yang diminta (termasuk izin untuk melihat, mengedit, dan mengelola kalender Anda secara permanen). Izin ini aman dan hanya digunakan oleh `focus-cli` untuk membuat kalender khusus bernama `Focus Sessions`.
+
+### 4. Error `oauth2: "invalid_grant" "Token has been expired or revoked."`
+* **Penyebab**: Refresh Token Google sudah kadaluwarsa (misalnya karena OAuth consent screen masih di status *Testing* sehingga kedaluwarsa setelah 7 hari), atau akses aplikasi dicabut dari akun Google.
+* **Solusi**:
+  1. Jalankan perintah otentikasi ulang: `focus gcal login`.
+  2. Pastikan status GCP OAuth Consent Screen telah diubah dari **Testing** ke **In Production** (klik **Publish App**) di Google Cloud Console seperti pada Langkah 3 agar token tidak expired lagi setelah 7 hari.
