@@ -92,7 +92,7 @@ func (c *Client) SyncSessionEventWithService(ctx context.Context, srv *calendar.
 
 	createdEvent, err := srv.Events.Insert(calendarID, event).Do()
 	if err != nil {
-		return "", fmt.Errorf("membuat event kalender gagal: %w", err)
+		return "", FormatGCalError(fmt.Errorf("membuat event kalender gagal: %w", err))
 	}
 
 	// Simpan Calendar ID ke konfigurasi jika berhasil
@@ -123,7 +123,7 @@ func (c *Client) ImportTasksWithService(ctx context.Context, srv *calendar.Servi
 	listCall := srv.CalendarList.List()
 	list, err := listCall.Do()
 	if err != nil {
-		return nil, fmt.Errorf("mengambil list kalender gagal: %w", err)
+		return nil, FormatGCalError(fmt.Errorf("mengambil list kalender gagal: %w", err))
 	}
 
 	for _, entry := range list.Items {
@@ -144,7 +144,7 @@ func (c *Client) ImportTasksWithService(ctx context.Context, srv *calendar.Servi
 	eventsCall := srv.Events.List(calendarID).SingleEvents(true).TimeMin(timeMin)
 	events, err := eventsCall.Do()
 	if err != nil {
-		return nil, fmt.Errorf("mengambil event kalender gagal: %w", err)
+		return nil, FormatGCalError(fmt.Errorf("mengambil event kalender gagal: %w", err))
 	}
 
 	// Load task store to check DeletedGCalEventIDs
@@ -284,7 +284,7 @@ func (c *Client) UpdateEventTitle(ctx context.Context, eventID, newTitle string,
 	}
 	_, err = srv.Events.Patch(calendarID, eventID, event).Do()
 	if err != nil {
-		return fmt.Errorf("update event GCal gagal: %w", err)
+		return FormatGCalError(fmt.Errorf("update event GCal gagal: %w", err))
 	}
 
 	return nil
@@ -320,7 +320,7 @@ func (c *Client) MarkEventAsDoneWithService(ctx context.Context, srv *calendar.S
 	// 2. Dapatkan event saat ini
 	event, err := srv.Events.Get(calendarID, eventID).Do()
 	if err != nil {
-		return fmt.Errorf("mengambil event GCal gagal: %w", err)
+		return FormatGCalError(fmt.Errorf("mengambil event GCal gagal: %w", err))
 	}
 
 	// 3. Tambahkan awalan [Done] jika belum ada
@@ -328,7 +328,7 @@ func (c *Client) MarkEventAsDoneWithService(ctx context.Context, srv *calendar.S
 		event.Summary = "[Done] " + event.Summary
 		_, err = srv.Events.Update(calendarID, eventID, event).Do()
 		if err != nil {
-			return fmt.Errorf("memperbarui event GCal gagal: %w", err)
+			return FormatGCalError(fmt.Errorf("memperbarui event GCal gagal: %w", err))
 		}
 	}
 
